@@ -1,0 +1,499 @@
+
+""" 
+Here the AIMMD analysis framework will be made.
+It should contain the following:
+- Load in a list of ops-storage files
+- single direction analaysis of the TIS to compute the crossing probabilities A->B B->A etc.
+- 
+
+
+"""
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import openpathsampling as paths
+from pathlib import Path
+from .Tools import interface_indicator, save_fig_pdf_and_png, count_sign_changes
+from openpathsampling.experimental.storage import Storage
+
+# this will be a analysis class which is seperate from the TIS_AIMMD class, 
+# the AIMMD model and storage should be loaded into this analysis class 
+# Dertermine the snapshots which are inside the defined stable statess
+
+
+
+def Create_Stable_trainset(storage_list, descriptor_transform, descriptor_dim, states):
+    n_dim = descriptor_dim
+    weights_each_stable = [] 
+    descriptors_each_stable= []
+    shot_results_each_stable= []
+    for index_state  in range(len(storage_list)):
+        print("loading data for state {}".format(index_state))
+        points= len(storage_list[0].snapshots)
+        weights = np.ones(points)
+        descriptors = np.zeros((points,n_dim))
+        shot_results = np.zeros((points,len(states)))
+        total_point_stored = 0
+        for traj in storage_list[index_state].trajectories:
+            start = total_point_stored
+            traj_snapshots = len(traj)
+            total_point_stored += traj_snapshots
+            weights[start:total_point_stored]= [states[index_state](traj.get_as_proxy(i)) for i in range(len(traj))]
+            shot_results[start:total_point_stored,0] =  states[0](traj.get_as_proxy(0))*np.ones(traj_snapshots)
+            shot_results[start:total_point_stored,1] = states[1](traj.get_as_proxy(0))*np.ones(traj_snapshots)
+            descriptors[start:total_point_stored,:] = descriptor_transform(traj)
+        descriptors = descriptors[:total_point_stored,:]
+        weights = weights[:total_point_stored]
+        shot_results = shot_results[:total_point_stored]
+        weights_each_stable.append(weights)
+        shot_results_each_stable.append(shot_results)
+        descriptors_each_stable.append(descriptors)
+
+    return descriptors_each_stable, weights_each_stable, shot_results_each_stable
+
+
+class RPE_toy:
+    def __init__(self, CrPrW_Forward, CrPrW_Backward):
+        
+        """
+        This is the analysis class of the TIS-AIMMD method, 
+        here the crossing probabilities will be computed and from this the RPE 
+        and Free energy allong selected collective variables.       
+        
+        """
+        self.CrPrW_Forward = CrPrW_Forward
+        self.CrPrW_Backward = CrPrW_Backward
+        eps = 0.01
+        maximum_forward = self.CrPrW_Backward.interfaces[0]
+        maximum_backward = self.CrPrW_Forward.interfaces[0]
+        print(maximum_forward)
+        print(maximum_backward)
+        print(CrPrW_Forward.interfaces)
+        print(CrPrW_Backward.interfaces)
+        index_q0 = int(np.where(abs(CrPrW_Forward.wham_cross_prob.index - maximum_forward)<eps)[0][0])
+        index_q0_Backward = int(np.where(abs(-CrPrW_Backward.wham_cross_prob.index-maximum_backward)<eps)[0][0])
+        index_Forward = CrPrW_Forward.wham_cross_prob.index[index_q0]
+        index_Backward = CrPrW_Backward.wham_cross_prob.index[index_q0_Backward]
+        p_Ai_0 = CrPrW_Forward.wham_cross_prob[index_Forward]
+        p_Bi_0 = CrPrW_Backward.wham_cross_prob[index_Backward]
+        self.c_A_0 = 1/p_Ai_0
+        self.c_B_0 = 1/p_Bi_0
+        self.data_Forward=[]
+        self.data_Backward=[]
+        self.interfaces_forward = CrPrW_Forward.interfaces
+        self.interfaces_backward = CrPrW_Backward.interfaces
+        self.data_Stable = None
+        self.load_stable =False
+        self.states=["A","B"]
+        self.descriptors_total = None
+        self.flux_compensation = [1,1]
+        self.n_thermalization_forward = self.CrPrW_Forward.n_thermalization
+        self.n_thermalization_backward = self.CrPrW_Backward.n_thermalization
+
+
+    def load_RPE(self,states=None,descriptor_transform=None, descriptor_dims=None,number_traj_used=2000, n_jump=1, data_pickle=None, stable_storages=None, load_stable=False):
+        self.load_stable = load_stable
+        if data_pickle==None:
+            self.data_Forward = self.Create_RPE_trainset(self.CrPrW_Forward, descriptor_transform, 
+                                                descriptor_dims, states,number_traj_used=number_traj_used, n_jump=n_jump, start_traj=self.n_thermalization_forward)
+            self.data_Backward = self.Create_RPE_trainset(self.CrPrW_Backward, descriptor_transform, 
+                                            descriptor_dims, states,number_traj_used=number_traj_used, n_jump=n_jump, start_traj=self.n_thermalization_backward)
+            if stable_storages is not None:
+                self.data_Stable = Create_Stable_trainset(stable_storages, descriptor_transform, descriptor_dims, states)
+        else: 
+            self.data_Forward = self.create_RPE_trainset_from_pickle(data_pickle,self.CrPrW_Forward.direction,self.CrPrW_Forward.interfaces)
+            self.data_Backward = self.create_RPE_trainset_from_pickle(data_pickle,self.CrPrW_Backward.direction,self.CrPrW_Backward.interfaces)
+            if load_stable:
+                self.data_Stable = self.create_RPE_trainset_from_pickle(data_pickle,"stable",["A","B"])
+    
+    def add_stable(self, storage_stable, descriptor_transform, descriptor_dim, states):
+        self.data_Stable = Create_Stable_trainset(storage_stable, descriptor_transform, descriptor_dim, states)
+
+    def save_RPE(self,filename):
+        # Example usage
+        data_store = DataStore()
+
+        # Add data for interfaces
+        for i, interface in enumerate(self.CrPrW_Forward.interfaces):
+            data_store.add_interface_data('forward', str(interface), self.data_Forward[0][i], self.data_Forward[1][i], self.data_Forward[2][i])
+
+        for i, interface in enumerate(self.CrPrW_Backward.interfaces):
+            data_store.add_interface_data('backward', str(interface), self.data_Backward[0][i], self.data_Backward[1][i], self.data_Backward[2][i])
+
+        if self.data_Stable is not None:
+            for i, state in enumerate(["A","B"]):
+                data_store.add_interface_data('stable', str(state), self.data_Stable[0][i], self.data_Stable[1][i], self.data_Stable[2][i])
+
+        # Save data to file
+        data_store.save_to_file(filename)
+
+    def Create_RPE_trainset(self,CrPrW, descriptor_transform, descriptor_dim, states, number_traj_used=2000,
+                            start_traj=200, n_jump=1,):
+        n_dim = descriptor_dim
+        n_steps = int(np.floor((number_traj_used-start_traj)/n_jump))
+        print("Looking at {} trajectories per interface".format(n_steps))
+        weights_interface = []
+        descriptors_interface = []
+        shot_results_interface = []
+        for index_interface, interface in enumerate(CrPrW.interfaces):
+            print("inteface q: ", interface)
+            total_point_stored = 0
+            points = len(CrPrW.storage_list[index_interface].snapshots)*2
+            weights = np.zeros(points)
+            descriptors = np.zeros((points,n_dim))
+            shot_results = np.zeros((points,2))
+            for i in range(n_steps):
+                # create mthod for this 
+                traj_index = start_traj + i*n_jump
+                step = CrPrW.storage_list[index_interface].steps[traj_index]
+                traj = step.active[0].trajectory
+                start = total_point_stored
+                total_point_stored += len(traj)
+                #TODO now one sides should check start and end direction of path
+                shot_results[start:total_point_stored,0] =  states[0](traj.get_as_proxy(-1))*np.ones(len(traj)) + states[0](traj.get_as_proxy(0))*np.ones(len(traj))
+                shot_results[start:total_point_stored,1] = states[1](traj.get_as_proxy(-1))*np.ones(len(traj)) + states[1](traj.get_as_proxy(0))*np.ones(len(traj))
+                weights[start:total_point_stored] = CrPrW.path_weights_interface[index_interface][traj_index]
+                weights = np.nan_to_num(weights,posinf=0,nan=0, neginf=0)
+                descriptors[start:total_point_stored,:] = descriptor_transform(traj)
+    
+            descriptors = descriptors[:total_point_stored,:]
+            weights = weights[:total_point_stored] 
+            shot_results = shot_results[:total_point_stored]
+            weights_interface.append(weights)
+            shot_results_interface.append(shot_results)
+            descriptors_interface.append(descriptors)
+        return descriptors_interface, weights_interface, shot_results_interface
+
+    def create_RPE_trainset_from_pickle(self,data_pickle, mode,interfaces_states):
+        data_store = DataStore()
+        data_store = data_store.load_from_file(data_pickle)
+        weights_interface = []
+        descriptors_interface = []
+        shot_results_interface = []
+        for i, interface in enumerate(interfaces_states):
+            weights_interface.append(data_store.data[mode][str(interface)].weights)
+            descriptors_interface.append(data_store.data[mode][str(interface)].descriptors)
+            shot_results_interface.append(data_store.data[mode][str(interface)].shot_results)
+        return descriptors_interface, weights_interface, shot_results_interface
+
+
+
+
+    def compute_flux_compensation_stable_states(self, interface_model,first_infterface_forward=None, first_interface_backward=None):
+        self.flux_compensation = []
+        self.in_stable = []
+        for state in range(2):
+            q_stable_data = interface_model.log_prob(self.data_Stable[0][state], use_transform=False, batch_size=None)
+            if state ==0:
+                if first_infterface_forward is None:
+                    q_interface = self.interfaces_forward[0] 
+                else:
+                    q_interface = first_infterface_forward
+            else:
+                if first_interface_backward is None:
+                    q_interface = self.interfaces_backward[0]
+                else:
+                    q_interface = first_interface_backward
+            print(q_interface)
+            my_array = np.array(q_stable_data)-q_interface
+            my_array_state_def = np.array(self.data_Stable[1][state])-0.5
+            in_stable = np.array(my_array <=0)[:,0] if state == 0 else np.array(my_array >=0)[:,0]
+            self.in_stable.append(in_stable)
+            print(np.shape(my_array))
+            print(np.shape(self.in_stable))
+            flux_lambda = count_sign_changes(my_array)    
+            flux_state = count_sign_changes(my_array_state_def)
+            print("The flux forward through interface {} is  {}".format(q_interface,flux_lambda))
+            print("The flux forward through interface stable_state is  {}".format(flux_state))
+
+            self.flux_compensation.append(flux_lambda/flux_state)
+        print(self.flux_compensation)
+
+    def create_total_trainset(self):
+        # create trainset
+        flux_scaling = []
+        if self.descriptors_total is None:
+            Total_snapshots = 0
+            Total_forward = 0
+            Total_backward = 0
+            n_descriptor_dims = np.shape(self.data_Forward[0][0])[1]
+
+
+            for i, interface in enumerate(self.interfaces_forward):
+                size = np.shape(self.data_Forward[1][i])[0]
+                Total_snapshots += size
+                Total_forward += size
+
+            for i, interface in enumerate(self.interfaces_backward):
+                size = np.shape(self.data_Backward[1][i])[0]
+                Total_snapshots += size 
+                Total_backward += size
+            if self.load_stable:
+                Total_stable = 0
+                for i, interface in enumerate(self.states):
+                    size = np.shape(self.data_Stable[1][i])[0]
+                    Total_snapshots += size 
+                    Total_stable += size
+                    flux_scaling.append(size)
+
+            weights_total = np.ones(Total_snapshots,dtype=np.float32)
+            descriptors_total = np.zeros((Total_snapshots,n_descriptor_dims),dtype=np.float32)
+            shot_results_total = np.zeros((Total_snapshots,2),dtype=np.float32)
+            start = 0
+            if self.load_stable:
+                equal_scaling_states = 1
+                print("cA: ", self.c_A_0)
+                print("cB: ", self.c_B_0)
+                print("flux A,B: ", self.flux_compensation)
+                kab = self.flux_compensation[0]/self.c_A_0
+                kba = self.flux_compensation[1]/self.c_B_0
+                print("Kab = ", kab)
+                print("Kba = ", kba)
+                Weight_factor = [self.c_A_0/self.flux_compensation[0], self.c_B_0/self.flux_compensation[1]]
+                print(Weight_factor)
+                Weight_factor = np.nan_to_num(Weight_factor, posinf=0) 
+                print(Weight_factor)
+                for i in range(len(self.states)):
+                    
+                    snapshots_interface = np.shape(self.data_Stable[0][i])[0]
+                    weights_total[start:start+snapshots_interface] =Weight_factor[i]*self.in_stable[i]
+                    # weights_total[start:start+snapshots_interface] =self.data_Stable[1][i]*Weight_factor[i] 
+
+                    descriptors_total[start:start+snapshots_interface,:] = self.data_Stable[0][i]
+                    shot_results_total[start:start+snapshots_interface,:] = self.data_Stable[2][i]
+                    start += snapshots_interface
+            
+
+            for i, interface in enumerate(self.interfaces_forward):
+                snapshots_interface = np.shape(self.data_Forward[0][i])[0]
+                weights_total[start:start+snapshots_interface] = self.data_Forward[1][i]*self.c_A_0
+                descriptors_total[start:start+snapshots_interface,:] = self.data_Forward[0][i]
+                shot_results_total[start:start+snapshots_interface,:] = self.data_Forward[2][i]
+                start += snapshots_interface
+
+
+            for i, interface in enumerate(self.interfaces_backward):
+                snapshots_interface = np.shape(self.data_Backward[0][i])[0]
+                weights_total[start:start+snapshots_interface] = self.data_Backward[1][i]*self.c_B_0
+                descriptors_total[start:start+snapshots_interface,:] = self.data_Backward[0][i]
+                shot_results_total[start:start+snapshots_interface,:] = self.data_Backward[2][i]
+                start += snapshots_interface
+
+            print(start)
+            print(Total_snapshots)
+
+
+            self.weights_total = weights_total[:start]/np.sum(weights_total)*self.c_A_0
+            self.descriptors_total = descriptors_total[:start]
+            self.shot_results_total = shot_results_total[:start]
+        return self.descriptors_total, self.weights_total, self.shot_results_total
+    
+
+    #TODO: implement create trainset per mode to clean create trainset code.
+    def create_trainset_mode(self, mode="forward"):
+        pass
+        
+
+
+    #TODO add flux compensation to get flux matching at the stable states crossing through the first interface 
+    # def compute_flux
+
+    
+""" since the procedure of the crossing probabilities and weights is the same for both the forward and backward 
+ direction the same class can be used for both instances.
+ The class should do the following.
+ Load the Storage files and max_min_cv values (and if max_min is not provided compute them)
+ get the correct x binning for the cumulative distribution
+ Compute the cumulative distributions of each interface in the cv space (in our case q-space)
+Compute the resulting WHAM cumulative distribution function.
+
+Obtain the unscaled RPE weight for each path in the TIS PE's
+"""
+
+#TODO sort the interfaces such that they are automatically correctly sorted
+class Crossing_Probability_and_weights:
+    def __init__(self, interfaces, direction, storage_folder: Path =None, storage_filename=None, storage_list=None, RPE_already_stored=False):
+        self.interfaces = interfaces
+        self.direction = direction
+        self.storage_folder = storage_folder
+        self.storage_filename = storage_filename
+        self.n_thermalization = None
+
+        if storage_list is None and not RPE_already_stored:
+            self.storage_list = self.import_storage()
+        else:
+            self.storage_list = storage_list
+
+    def Compute_crossing_prob_and_wham_path_weights(self, q_bins_WHAM, n_thermalization=200, cutoff=0.01, ax=None):
+        self.n_thermalization = n_thermalization
+        print("import max min cv data:")
+        self.import_max_min_cv(self.storage_folder,"max_min_q_int")
+        print("Compute crossing probabilities.")
+        if self.direction=="backward":
+            self.max_cv = [-cv for cv in self.max_cv]
+        self.TIS_crossing_probabilities(q_bins_WHAM, n_thermalization)
+        print("Compute crossing probabilies using WHAM")
+        self.create_wham_input(cutoff=cutoff, ax=ax)
+        crossingProb = self.wham_crossing()
+        wham_weights= self.wham_weights()
+        path_weights = self.path_weights_all_TIS(wham_weights)
+        return crossingProb, wham_weights, path_weights
+
+    def full_wham(self, n_bins, n_thermalization, starting_interface=0, cutoff=0.01, plot=False):
+        self.TIS_crossing_probabilities(n_bins, n_thermalization, plot=plot)
+        self.create_wham_input(starting_interface=starting_interface, cutoff=cutoff, plot=plot)
+        return self.wham_crossing()
+
+    def import_storage(self,type="db"):
+        storage_list = []
+        for interface_val in self.interfaces:
+            load_path= f"{self.storage_filename}_{self.direction}_{interface_indicator(interface_val)}.{type}"
+            load_path= Path(self.storage_folder / load_path).with_suffix(f".{type}")
+            print("Loading {} storage: {}".format(self.direction, load_path))
+            if type=="nc":
+                storage_list.append(paths.AnalysisStorage(load_path))
+            elif type=="db":
+                storage_list.append(Storage(load_path))
+                
+        return storage_list
+    
+    def import_max_min_cv(self, storage_folder, filename):
+        self.max_cv = [] 
+        if self.direction=="backward":
+            max_cv_ind = 0
+        else: 
+            max_cv_ind = 1
+
+        for interface_val in self.interfaces:
+            interface_indicator = int(np.round(interface_val*100))
+            print("interface: {}".format(interface_val))
+            fileStoreMax = "{}{}_{}.npy".format(filename, interface_indicator,self.direction)
+            fileStoreMax = Path(storage_folder/ fileStoreMax).with_suffix(".npy")
+            max_cv_from_storage = np.load(fileStoreMax)
+            if np.shape(max_cv_from_storage)[1]==2:
+                max_cv_from_storage = max_cv_from_storage[:,max_cv_ind]
+            self.max_cv.append(max_cv_from_storage)
+
+    # def read_max_cv_storage(self, cv, interface_val, store_max):
+    #     print("Collecting maximum per path for TIS with interface at cv={}".format(interface_val))
+    #     interface_indicator = int(np.round(interface_val*100))
+    #     fileStoreMax = "{}_{}_{}".format(store_max, interface_indicator)
+    #     max_cv = np.zeros(len(self.storage_list[i].steps))
+    #     for j, step in enumerate(self.storage_list.steps):
+    #         traj = step.active[0].trajectory
+    #         cv_values =np.array([cv(snapshot) for snapshot in traj ]).reshape(len(traj.snapshots))
+    #         max_cv[j] = max(cv_values)
+    #     np.save(fileStoreMax, max_cv)
+
+    def TIS_crossing_probabilities(self,n_bins, n_thermalization, q_min=-20, q_max=20,ax=None):
+        self.alldata = []
+        self.allydata = []
+        for i, interface_val in enumerate(self.interfaces):
+            interface_indicator = int(np.round(interface_val*100))
+            print("interface: {}".format(interface_val))
+            x =  np.asarray(self.max_cv[i][n_thermalization:])
+            n, bins = np.histogram(x, n_bins, density=True)
+            dx = np.diff(bins)
+            F1 = 1-np.cumsum(n)*dx
+            xdata= bins[1:]
+            ydata= F1
+            self.alldata.append(xdata)
+            self.allydata.append(ydata)
+            if ax is not None:
+                ax.grid(True)
+                if self.direction=="forward":
+                    ax.vlines(interface_val,ymax=1,ymin=0, label="q={}".format(interface_val))
+                elif self.direction=="backward" : 
+                    ax.vlines(-interface_val,ymax=1,ymin=0, label="q={}".format(interface_val))
+                ax.plot(xdata,ydata, color="green", label="cum Hist")
+                ax.legend(loc='right')
+                ax.set_yscale('log')
+                ax.set_xlim(q_min, q_max)
+                ax.set_title('Crossing Probability for interface q={}'.format(interface_val))
+                ax.set_xlabel('q_committor')
+                ax.set_ylabel('Probability')
+
+    def create_wham_input(self,starting_interface=0, cutoff=0.01, q_min=-20,q_max=20, ax=None):
+        self.input_df = pd.DataFrame(data=np.array(self.allydata[starting_interface:]).T,
+                        index=self.alldata[0])
+        self.wham = paths.numerics.WHAM(cutoff=cutoff)
+        self.prepared_tis = self.wham.prep_reverse_cumulative(self.input_df)
+        if ax is not None:
+            color = 'black'
+            index= self.alldata[0]
+            ymin= 1/len(self.max_cv[0])
+            ymax= 1.5
+            #plt.plot(index, exact, '-ok', lw=2)
+            #for iface, color in zip(prepared.columns, ['r', 'g', 'b']):
+            for iface in self.prepared_tis.columns:
+                # NaN out the 0 data, to prevent it from plotting
+                values = self.prepared_tis[iface].apply(lambda x: np.nan if x==0.0 else x)
+                ax.plot(values, "-o", color=color)
+                ax.plot(self.input_df[iface], "--",color=color)
+                if self.direction=="forward":
+                    ax.vlines(self.interfaces,ymin=ymin, ymax=ymax)
+                elif self.direction=="backward" : 
+                    ax.vlines([-l for l in self.interfaces],ymin=ymin, ymax=ymax)
+                ax.set_xlim(q_min, q_max)
+                ax.set_ylim(ymin,ymax)
+                ax.set_yscale('log')
+                ax.set_xlabel(r"q",fontsize=20)
+                ax.set_ylabel('Probability',fontsize=20)
+            ax.grid()
+    
+    def wham_crossing(self):
+        self.wham_cross_prob = self.wham.wham_bam_histogram(self.input_df)
+        return self.wham_cross_prob
+    
+    def wham_weights(self):
+        self.weights_bin = self.wham_cross_prob/np.sum(self.prepared_tis,axis=1)
+        return self.weights_bin
+
+    def path_weight_per_tis_ensemble(self, weights_bin, max_cv):
+        #can only get in a 1d array of cv (thus seperate for each interface)
+        path_weight = np.zeros(np.shape(max_cv)[0])
+        for path_label, max_ in enumerate(max_cv):
+            ind = np.where(weights_bin.index<max_)[0][-1] # this gives the last bin for which the maximum is higher (so the first edge of the bin the maximum is in)
+            path_weight[path_label] = weights_bin[weights_bin.index[ind]]
+            # path_weight = W_A[np.where(max>W_A[:,0])[0][0]]
+
+        path_weight = np.nan_to_num(path_weight,posinf=0,nan=0, neginf=0)
+        return path_weight
+
+    def path_weights_all_TIS(self, weights_bin):
+        self.path_weights_interface = []
+        for i, interface_val in enumerate(self.interfaces):
+            max_cv = self.max_cv[i]
+            self.path_weights_interface.append(self.path_weight_per_tis_ensemble(weights_bin, max_cv))
+        return self.path_weights_interface
+
+
+
+
+import pickle
+
+class InterfaceData:
+    def __init__(self, descriptors, weights, shot_results):
+        self.descriptors = descriptors
+        self.weights = weights
+        self.shot_results = shot_results
+
+class DataStore:
+    def __init__(self):
+        self.data = {}
+
+    def add_interface_data(self, mode, interface_name, descriptors, weights, shot_results):
+        if mode not in self.data:
+            self.data[mode] = {}
+        self.data[mode][interface_name] = InterfaceData(descriptors, weights, shot_results)
+
+    def save_to_file(self, filename):
+        with open(filename, 'wb') as file:
+            pickle.dump(self.data, file)
+
+    @classmethod
+    def load_from_file(cls, filename):
+        instance = cls()
+        with open(filename, 'rb') as file:
+            instance.data = pickle.load(file)
+        return instance
