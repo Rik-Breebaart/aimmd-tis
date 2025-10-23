@@ -1,12 +1,13 @@
 import numpy as np 
 import torch 
+# import aimmd
 import json
 import matplotlib.pyplot as plt
 import matplotlib
 import openpathsampling as paths
 from .Tools import create_discrete_cmap
 from .Toy_potentials import CallableVolume
-from .Training import snapshot_loss_original, snapshot_lnP, snapshot_loss_normalized_q, snapshot_loss_low_q_scaled, snapshot_loss_sqrt_rho_weight, snapshot_loss_smoothness
+from .Training import snapshot_loss_original, snapshot_lnP, snapshot_loss_normalized_q, snapshot_loss_low_q_scaled, snapshot_loss_sqrt_rho_weight
 
 class ToyAimmdVisualizer:
     def __init__(self, temperature=1, resolution=501, descriptor_dims=[0,1], total_num_descriptors = None, dims_extent = None, pes=None, toy=True, standard_value=None):
@@ -36,12 +37,12 @@ class ToyAimmdVisualizer:
         self.standard_value = [0]*self.total_num_descriptors if standard_value is None else standard_value
         self.set_plot_settings()
     
+    
     def committor_2d_projection(self, plot_model, n_epoch=None, fig=None, ax=None):
         if ax is None:
-            fig,ax = plt.subplots(1,1)
+            fig, ax = plt.subplots(1,1)
         self.plot_committor_model_projection(plot_model,ax=ax)
-        if self.pes is not None:
-            self.plot_potential_contour(ax=ax)
+        self.plot_potential_contour(ax=ax)
         self.plot_committor_model_projection_contour(plot_model,ax=ax,colors="k")
         if n_epoch == None: 
             ax.set_title(r'model prediction $p_B$')
@@ -50,10 +51,9 @@ class ToyAimmdVisualizer:
 
     def q_space_2d_projection(self, plot_model, n_epoch=None, v_min_max = 15, fig=None, ax=None):
         if ax is None:
-            fig,ax = plt.subplots(1,1)
+            fig, ax = plt.subplots(1,1)
         self.plot_q_model_projection(plot_model,ax=ax)
-        if self.pes is not None:
-            self.plot_potential_contour(ax=ax)
+        self.plot_potential_contour(ax=ax)
         self.plot_q_model_projection_contour(plot_model,ax=ax,colors="k")
 
         if n_epoch == None:
@@ -64,12 +64,11 @@ class ToyAimmdVisualizer:
     def RPE_2d(self, fig=None, ax=None):
         if ax is None:
             fig_, ax = plt.subplots(1,1)
-        self.plot_RPE_histogram(ax=ax)
+        im = self.plot_RPE_histogram(ax=ax)
         self.plot_RPE_contours(ax=ax,fig=fig)
-        if self.pes is not None:
-            self.plot_potential_contour(ax=ax)
+        self.plot_potential_contour(ax=ax)
         ax.set_title("RPE distribution")
-        return 
+        return im
 
     def set_plot_settings(self):
         """
@@ -148,8 +147,10 @@ class ToyAimmdVisualizer:
         # State volumes in CV space
         stateA = paths.CVDefinedVolume(opA, 0.0, self.pes.state_boundary).named('StateA')
         stateB = paths.CVDefinedVolume(opB, 0.0, self.pes.state_boundary).named('StateB')
-        xedges, yedges = self.create_x_y_edges(dims_extent=self.pes.extent, n_bins_2d=[501,501])
-
+        n_x=501
+        n_y=501
+        xedges = np.linspace(self.pes.extent[0], self.pes.extent[1], n_x)
+        yedges = np.linspace(self.pes.extent[2], self.pes.extent[3], n_y) 
         x_2d, y_2d = np.meshgrid(xedges, yedges)
         states_plot_A = np.vectorize(CallableVolume(stateA))(x_2d,y_2d)
         states_plot_B = np.vectorize(CallableVolume(stateB))(x_2d,y_2d)
@@ -192,6 +193,8 @@ class ToyAimmdVisualizer:
         ax.clabel(contour, inline=1, fontsize=10)
         if fig is not None:
             fig.colorbar(contour)
+    
+
 
     def plot_theoretical_q(self,theoretical_committor_path, n_x, n_y=None, fig=None, ax=None):
         """
@@ -227,7 +230,7 @@ class ToyAimmdVisualizer:
             cb = fig.colorbar(im, ax=ax)
             cb.set_label(r"Theoretical $p_b$")
 
-    def theoretical_q_contour(self, theoretical_committor_path, n_x, n_y=None, fig=None, ax=None, colorbar=True):
+    def theoretical_q_contour(self, theoretical_committor_path, n_x, n_y=None, fig=None, ax=None,colorbar=True):
         """
         Plot the contour of the theoretical q function.
         """
@@ -241,9 +244,47 @@ class ToyAimmdVisualizer:
 
         contour = ax.contour(x_2d, y_2d, q_theory, levels=self.levels_theory, cmap=self.cmap_theory, linewidths=self.linewidth_theory, alpha=self.alpha_theory, linestyles=self.linestyle_theory, colors=self.color_theory)
         ax.clabel(contour, inline=1, fontsize=10)
-        if fig is not None and colorbar:
+        if fig is not None  and colorbar:
             cb = fig.colorbar(contour, ax=ax)
             cb.set_label("Theoretical q contour")
+
+    def error_in_q_model_vs_theory(self, plot_model, theoretical_committor_path,n_x,n_y=None,fig=None, ax=None):
+        """
+        Plot the relative error between the model and 0,0 projection
+        """
+        if n_y is None:
+            n_y = n_x
+        p_theory, q_theory, xedges, yedges = self.load_theoretical_committor(theoretical_committor_path, n_x, n_y)
+        q, x_2d, y_2d = self.compute_q_model_2d(plot_model, n_bins_2d=n_x)
+        error = np.abs(q_theory-q)
+
+        return error, x_2d,y_2d
+    
+
+    def error_in_q_model_on_RPE_vs_theory(self, plot_model, theoretical_committor_path,n_x,n_y=None,fig=None, ax=None):
+        """
+        Plot the relative error between the model and 0,0 projection
+        """
+        if n_y is None:
+            n_y = n_x
+        p_theory, q_theory, xedges, yedges = self.load_theoretical_committor(theoretical_committor_path, n_x, n_y)
+        average_pb_model, average_q_model, xedges, yedges = self.committor_model_2d_RPE(plot_model,n_bins_2d=n_x+1, descriptor_dims=[0,1])
+        error = np.abs(q_theory-average_q_model)
+        x_2d, y_2d = np.meshgrid(xedges, yedges)
+        return error, x_2d,y_2d
+
+    def error_in_q_of_RPE_vs_theory(self, plot_model, theoretical_committor_path,n_x,n_y=None,fig=None, ax=None):
+        """
+        Plot the relative error between the model and 0,0 projection
+        """
+        if n_y is None:
+            n_y = n_x
+        p_theory, q_theory, xedges, yedges = self.load_theoretical_committor(theoretical_committor_path, n_x, n_y)
+        p_B_histogram, xedges, yedges = self.weighted_committor_RPE(n_bins_2d=n_x+1, descriptor_dims=[0,1])
+        error = np.abs(q_theory-(np.log(p_B_histogram)-np.log(1-p_B_histogram)))
+        x_2d, y_2d = np.meshgrid(xedges, yedges)
+        return error, x_2d,y_2d
+
 
     def load_RPE_data(self, RPE):
         """
@@ -251,26 +292,11 @@ class ToyAimmdVisualizer:
         """
         self.RPE = RPE
 
-    def create_x_y_edges(self,dims_extent=None, n_bins_2d=100):
-        """
-        Create x and y edges for the 2D grid.
-        """
-            # Generate edges for the 2D grid
-        if dims_extent is None:
-            dims_extent = self.dims_extent
-        if np.shape(n_bins_2d) == ():
-            n_bins_2d = [n_bins_2d, n_bins_2d]
-        xedges = np.linspace(dims_extent[0], dims_extent[1], n_bins_2d[0])
-        yedges = np.linspace(dims_extent[2], dims_extent[3], n_bins_2d[1])
-        return xedges, yedges
-
     def model_2d_output(self, plot_model):
         """
         Generate 2D output from the model on a grid.
         """
-        if self.pes is None:
-            raise ValueError("PES is not defined.")
-        oscis = [0. for _ in range(self.total_num_descriptors - 2)]
+        oscis = [0. for _ in range(self.pes.n_harmonics + self.pes.n_dims_pot - 2)]
         coord = np.array([[xv, yv] + oscis for yv in self.y for xv in self.x], dtype=np.float32)
         q = plot_model.log_prob(torch.as_tensor(coord, device=plot_model._device), use_transform=False)
         q = q.reshape((len(self.x), len(self.y)))
@@ -297,73 +323,24 @@ class ToyAimmdVisualizer:
                     self.RPE.data_Stable[0], self.RPE.data_Stable[1], descriptor_dims=descriptor_dims)
         self.descriptor_dims_hist_used = descriptor_dims
               
-    def create_2d_projection_coord(self, n_bins_2d=100, descriptor_dims=None, dims_extent = None, standard_value=None):
-        if descriptor_dims is None:
-            descriptor_dims = self.descriptor_dims
-        
-        xedges,yedges = self.create_x_y_edges(dims_extent=dims_extent, n_bins_2d=n_bins_2d)
-
-        # Initialize standard_value if not provided
-        if self.standard_value is None and standard_value is None:
-            standard_value = [0] * self.total_num_descriptor
-        elif standard_value is None:
-            standard_value = self.standard_value
-
-        # Ensure standard_value has the correct length
-        assert len(standard_value) == self.total_num_descriptors, \
-            f"standard_value must have length {self.total_num_descriptors}, got {len(standard_value)}"
-
-        # Create coordinates for the 2D grid with the specified standard values
-        coord = []
-        for yv in yedges:
-            for xv in xedges:
-                point = standard_value.copy()
-                point[descriptor_dims[0]] = xv
-                point[descriptor_dims[1]] = yv
-                coord.append(point)
-        coord = np.array(coord, dtype=np.float32)
-        return coord, xedges, yedges
-
-    def create_1d_slice_coord(self, n_bins=100, descriptor_dim=None, dims_extent = None, standard_value=None):
-        if descriptor_dim is None:
-            descriptor_dim = self.descriptor_dims[0]
-        
-        xedges = np.linspace(dims_extent[0],dims_extent[1],n_bins)
-
-
-        # Ensure standard_value has the correct length
-        assert len(standard_value) == self.total_num_descriptors, \
-            f"standard_value must have length {self.total_num_descriptors}, got {len(standard_value)}"
-
-        # Create coordinates for the 2D grid with the specified standard values
-        coord = []
-        for xv in xedges:
-            point = standard_value.copy()
-            point[descriptor_dim] = xv
-            coord.append(point)
-        coord = np.array(coord, dtype=np.float64)
-        return coord, xedges
-    
-    def compute_q_model_2d(self, model, descriptor_dims=None, dims_extent = None, standard_values = None, n_bins_2d = 300):
+    def compute_q_model_2d(self, model, descriptor_dims=None, n_bins_2d = 300):
         """
         Compute the q model in 2D.
         """
-        coord, xedges, yedges = self.create_2d_projection_coord(n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims, dims_extent=dims_extent, standard_value=standard_values)
+        if descriptor_dims is None:
+            descriptor_dims = self.descriptor_dims
         
         self._model_contours = model
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
+        oscis1 = [0. for _ in range(descriptor_dims[1] - 1)]
+        oscis2 = [0. for _ in range(self.pes.n_dims_pot + self.pes.n_harmonics - descriptor_dims[1] - 1)]
+        coord = np.array([[xv] + oscis1 + [yv] + oscis2 for yv in xedges for xv in yedges], dtype=np.float32)
         q = model.log_prob(torch.as_tensor(coord, device=model._device), use_transform=False)
         q = q.reshape((len(yedges), len(xedges)))
         X_pb_2d, Y_pb_2d = np.meshgrid(xedges, yedges)
         return q, X_pb_2d, Y_pb_2d
 
-    def compute_q_model_1d(self, model, descriptor_dim=None, dims_extent = None, standard_values = None, n_bins = 300):
-        """
-        Compute the q model in 2D.
-        """
-        coord, xedges= self.create_1d_slice_coord(n_bins=n_bins, descriptor_dim=descriptor_dim, dims_extent=dims_extent, standard_value=standard_values)
-        q = model.log_prob(torch.as_tensor(coord, device=model._device), use_transform=False)
-        return q, xedges
-    
     def full_RPE_histogram(self, n_bins_2d=100, descriptor_dims=None):
         """
         Compute the full histogram for RPE data.
@@ -372,8 +349,8 @@ class ToyAimmdVisualizer:
             descriptor_dims = self.descriptor_dims
 
         descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
-
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         H, _, _ = np.histogram2d(
             descriptors_total[:, descriptor_dims[0]],
             descriptors_total[:, descriptor_dims[1]],
@@ -404,9 +381,9 @@ class ToyAimmdVisualizer:
             fig, ax = plt.subplots(1, 1)
 
         # im = ax.contour(self.x_2d, self.y_2d, -self.beta*self.U, levels=-self.levels_U[::-1], cmap=self.cmap_potential_contours, alpha=self.alpha_potential, linewidths=self.linewidth_potential_contours)
-        im = ax.contour(self.x_2d, self.y_2d, self.beta*self.U, levels=self.beta*self.levels_U, cmap=self.cmap_potential_contours, alpha=self.alpha_potential, linewidths=self.linewidth_potential_contours)
-        ax.set_xlabel(r"$s_x$")
-        ax.set_ylabel(r"$s_y$")
+        im = ax.contour(self.x_2d, self.y_2d, self.beta*self.U, levels=self.levels_U, cmap=self.cmap_potential_contours, alpha=self.alpha_potential, linewidths=self.linewidth_potential_contours)
+        ax.set_xlabel(r"$x$")
+        ax.set_ylabel(r"$y$")
         if fig is not None:
             cb = fig.colorbar(im, ax=ax)
             cb.set_label(r"potential ($K_b T$)")
@@ -458,66 +435,40 @@ class ToyAimmdVisualizer:
         if fig is not None:
             fig.colorbar(im, ax=ax)
 
-    def plot_RPE_histogram(self, ax=None, fig=None, n_bins_2d=100, descriptor_dims=None, log_rho=True, v_min_max=None, offset=False):
+    def plot_RPE_histogram(self, ax=None, fig=None, n_bins_2d=100, descriptor_dims=None):
         """
         Plot the data histogram.
         """
         if ax is None:
             fig, ax = plt.subplots(1, 1)
-        # if self.H_full is None or descriptor_dims != None:
-        #     self.full_RPE_histogram(descriptor_dims=descriptor_dims)
-        self.H_full, xedges, yedges = self.weighted_RPE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims) 
+        if self.H_full is None or descriptor_dims != None:
+            self.full_RPE_histogram(descriptor_dims=descriptor_dims)
         with np.errstate(divide='ignore'):
-            H_log_rho = np.log(self.H_full.T)
-        if v_min_max is not None:
-            v_min, v_max = v_min_max[0], v_min_max[1]
-        else:
-            v_min, v_max = None, None
-        if offset:
-            ind = np.unravel_index(np.argmin(-H_log_rho, axis=None), H_log_rho.shape)
-            RPE_FE_offset = H_log_rho[ind[0],ind[1]]
-        else: 
-            RPE_FE_offset = 0   
-            
-        if log_rho:
-            im = ax.imshow(H_log_rho, origin='lower', cmap=self.cmap_distribution, extent=self.dims_extent, aspect='auto',vmin=v_min,vmax=v_max)
-        else:  
-            im = ax.imshow(-H_log_rho+RPE_FE_offset, origin='lower', cmap=self.cmap_distribution, extent=self.dims_extent, aspect='auto',vmin=v_min,vmax=v_max)
+            im = ax.imshow(np.log(self.H_full.T), origin='lower', cmap=self.cmap_distribution, extent=self.dims_extent, aspect='auto')
         if fig is not None:
             fig.colorbar(im, ax=ax)
         return im
-
-    def plot_RPE_contours(self, ax=None, fig=None, n_bins_2d=100, descriptor_dims=None, offset=True, levels=None,cmap="Greys_r", clabel=False):
+    
+    def plot_RPE_contours(self, ax=None, fig=None, n_bins_2d=100, descriptor_dims=None, offset=True):
         """
         Plot the data histogram contours.
         """
         if ax is None:
             fig, ax = plt.subplots(1, 1)
-
-        self.H_full, xedges, yedges = self.weighted_RPE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims) 
-        with np.errstate(divide='ignore'):
-            H_log_rho = np.log(self.H_full.T)
-        if self.pes is not None and offset:
-            xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
-            x_2d,y_2d, U = self.pes.plot_2d_pes(xedges,yedges)
-            ind = np.unravel_index(np.argmin(U, axis=None), U.shape)
-            RPE_FE = -np.log(self.H_full.T)/self.beta
-
+        if self.H_full is None or descriptor_dims != None:
+            self.full_RPE_histogram(descriptor_dims=descriptor_dims)
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
+        x_2d,y_2d, U = self.pes.plot_2d_pes(xedges,yedges)
+        ind = np.unravel_index(np.argmin(U, axis=None), U.shape)
+        RPE_FE = -np.log(self.H_full.T)/self.beta
         if offset:
-            ind = np.unravel_index(np.argmin(-H_log_rho, axis=None), H_log_rho.shape)
-            RPE_FE_offset = H_log_rho[ind[0],ind[1]]
+            RPE_FE_offset = RPE_FE[ind[0],ind[1]]
         else: 
-            RPE_FE_offset = 0   
-        if levels is None:
-            levels = len(self.levels_U)
-        else:
-            levels = levels
+            RPE_FE_offset = 0
         
 
-        im = ax.contour(-H_log_rho+RPE_FE_offset, levels = levels, cmap=cmap, extent=self.dims_extent, linewidths=self.linewidth)
-        if clabel==True:
-            ax.clabel(im, inline=True, fontsize=10)
+        im = ax.contour(np.log(self.H_full.T)-RPE_FE_offset, levels = len(self.levels_U), cmap="Greys", extent=self.dims_extent, linewidths=self.linewidth)
         if fig is not None:
             fig.colorbar(im, ax=ax)
     
@@ -527,8 +478,8 @@ class ToyAimmdVisualizer:
             fig, ax = plt.subplots(1, 1)
         if self.H_full is None:
             self.full_RPE_histogram()
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         x_2d,y_2d, U = self.pes.plot_2d_pes(xedges,yedges)
         ind = np.unravel_index(np.argmin(U, axis=None), U.shape)
         # ind = [50,50]
@@ -544,53 +495,6 @@ class ToyAimmdVisualizer:
             cb = fig.colorbar(im, ax=ax)
             cb.set_label(r"Error RPE [$K_b T$]")
 
-    def error_in_q_model_vs_theory(self, plot_model, theoretical_committor_path,n_x,n_y=None,fig=None, ax=None):
-        """
-        Plot the relative error between the model and 0,0 projection
-        """
-        if n_y is None:
-            n_y = n_x
-        p_theory, q_theory, xedges, yedges = self.load_theoretical_committor(theoretical_committor_path, n_x, n_y)
-        q, x_2d, y_2d = self.compute_q_model_2d(plot_model, n_bins_2d=n_x)
-        error = np.abs(q_theory-q)
-
-        return error, x_2d,y_2d
-    
-
-    def error_in_q_model_on_RPE_vs_theory(self, plot_model, theoretical_committor_path,n_x,n_y=None,fig=None, ax=None):
-        """
-        Plot the relative error between the model and 0,0 projection
-        """
-        if n_y is None:
-            n_y = n_x
-        p_theory, q_theory, xedges, yedges = self.load_theoretical_committor(theoretical_committor_path, n_x, n_y)
-        average_pb_model, average_q_model, xedges, yedges = self.committor_model_2d_RPE(plot_model,n_bins_2d=n_x+1, descriptor_dims=[0,1])
-        error = np.abs(q_theory-average_q_model)
-        x_2d, y_2d = np.meshgrid(xedges, yedges)
-        return error, x_2d,y_2d
-
-    def error_in_q_of_RPE_vs_theory(self, plot_model, theoretical_committor_path,n_x,n_y=None,fig=None, ax=None):
-        """
-        Plot the relative error between the model and 0,0 projection
-        """
-        if n_y is None:
-            n_y = n_x
-        p_theory, q_theory, xedges, yedges = self.load_theoretical_committor(theoretical_committor_path, n_x, n_y)
-        p_B_histogram, xedges, yedges = self.weighted_committor_RPE(n_bins_2d=n_x+1, descriptor_dims=[0,1])
-        error = np.abs(q_theory-(np.log(p_B_histogram)-np.log(1-p_B_histogram)))
-        x_2d, y_2d = np.meshgrid(xedges, yedges)
-        return error, x_2d,y_2d
-
-    def plot_error_in_q_model_vs_theory_projection(self, plot_model,theoretical_committor_path,n_x,n_y=None,fig=None, ax=None, vmax=3):
-        error, x_2d, y_2d = self.error_in_q_model_vs_theory(plot_model,theoretical_committor_path,n_x,n_y)
-        if ax is None:
-            fig,ax = plt.subplots(1,1)
-        im = ax.imshow(error, origin='lower',interpolation='nearest', 
-            extent=self.dims_extent,aspect="auto", cmap=self.cmap_committor, vmax=vmax)
-        if fig is not None:
-            fig.colorbar(im);
-        return im
-
     def initialize_nones(self):
         """
         Initialize variables to None.
@@ -605,13 +509,13 @@ class ToyAimmdVisualizer:
         self._model_contours = None
 
     def weighted_histogram2d(self,descriptors_interface, weights_interface, n_bins_2d=100, descriptor_dims = [0,1]):
-        
         if descriptor_dims is None:
             descriptor_dims = self.descriptor_dims
-        if np.shape(n_bins_2d) == ():
-            n_bins_2d = [n_bins_2d, n_bins_2d]
-        H = np.zeros(((n_bins_2d[0]-1),(n_bins_2d[1]-1)))
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+
+        H = np.zeros(((n_bins_2d-1),(n_bins_2d-1)))
+        
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
 
         H_each_interface = []
         for index_interface in range(len(descriptors_interface)):
@@ -645,6 +549,7 @@ class ToyAimmdVisualizer:
         ax.clabel(CS, inline=1, fontsize=10)
         if fig is not None:
             fig.colorbar(CS);
+        return CS
     
     def plot_committor_model_projection(self, plot_model, fig=None, ax=None):
         q, x_2d, y_2d = self.compute_q_model_2d(plot_model)
@@ -672,6 +577,15 @@ class ToyAimmdVisualizer:
         if fig is not None:
             fig.colorbar(CS);
 
+    def plot_error_in_q_model_vs_theory_projection(self, plot_model,theoretical_committor_path,n_x,n_y=None,fig=None, ax=None, vmax=3):
+        error, x_2d, y_2d = self.error_in_q_model_vs_theory(plot_model,theoretical_committor_path,n_x,n_y)
+        if ax is None:
+            fig,ax = plt.subplots(1,1)
+        im = ax.imshow(error, origin='lower',interpolation='nearest', 
+            extent=self.dims_extent,aspect="auto", cmap=self.cmap_committor, vmax=vmax)
+        if fig is not None:
+            fig.colorbar(im);
+        return im
     #TODO seperate TIS ensembles into smaller tasks for plotting
     def all_interfaces_ensembles(self,dim_y=1,model=None, fig=None, ax=None, dq_above=None, show_qpoints=False):
 
@@ -714,9 +628,8 @@ class ToyAimmdVisualizer:
     #             extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],aspect="auto")
         im = ax.imshow(np.log(H_normalized), interpolation='nearest', origin='lower',cmap="Blues",
             extent=[self.xedges[0], self.xedges[-1], self.yedges[0], self.yedges[-1]],aspect="auto",alpha=0.8)
-        if self.pes is not None:
-            x_2d,y_2d,U = self.pes.plot_2d_pes(self.xedges, self.yedges, dim_y=dim_y)
-            ax.contour(x_2d,y_2d,self.beta*U,levels= self.levels_U, cmap="gray",alpha = 0.8)
+        x_2d,y_2d,U = self.pes.plot_2d_pes(self.xedges, self.yedges, dim_y=dim_y)
+        ax.contour(x_2d,y_2d,self.beta*U,levels= self.levels_U, cmap="gray",alpha = 0.8)
         X, Y = np.meshgrid(self.xedges[1:], self.yedges[1:])
         ax.contour(X, Y, np.log(H_normalized),cmap="Blues")
         if model !=None:
@@ -724,7 +637,7 @@ class ToyAimmdVisualizer:
                 q, X_pb_2d, Y_pb_2d = self.compute_q_model_2d(model, descriptor_dims=descriptor_dims)
             CS = ax.contour(X_pb_2d, Y_pb_2d, q, levels=levels,linewidths=4, colors='k',alpha=0.5)
             ax.clabel(CS, inline=1, fontsize=20)
-        if interface_q is not None and show_qpoints:
+        if interface_q and show_qpoints:
             if dq_above is None:
                 dq_above = 100
             if direction=="forward":
@@ -755,8 +668,8 @@ class ToyAimmdVisualizer:
             descriptor_dims = self.descriptor_dims
 
         descriptors_total, weights_total,shot_results_total = self.RPE.create_total_trainset()
-        xedges, yedges = self.create_x_y_edges(dims_extent=dims_extent, n_bins_2d=n_bins_2d)
-
+        xedges = np.linspace(dims_extent[0], dims_extent[1], n_bins_2d)
+        yedges = np.linspace(dims_extent[2], dims_extent[3], n_bins_2d)
         # now look at the P_b based on the training data
         H_weighted_pB, xedges, yedges = np.histogram2d(descriptors_total[:,descriptor_dims[0]],
                                                 descriptors_total[:,descriptor_dims[1]],
@@ -777,8 +690,8 @@ class ToyAimmdVisualizer:
             descriptor_dims = self.descriptor_dims
 
         descriptors_total, weights_total,shot_results_total = self.RPE.create_total_trainset()
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         # now look at the P_b based on the training data
         H_unweighted, xedges, yedges = np.histogram2d(descriptors_total[:,descriptor_dims[0]],
                                                 descriptors_total[:,descriptor_dims[1]],
@@ -791,8 +704,8 @@ class ToyAimmdVisualizer:
             descriptor_dims = self.descriptor_dims
 
         descriptors_total, weights_total,shot_results_total = self.RPE.create_total_trainset()
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         # now look at the P_b based on the training data
         H_weighted, xedges, yedges = np.histogram2d(descriptors_total[:,descriptor_dims[0]],
                                                 descriptors_total[:,descriptor_dims[1]],
@@ -813,9 +726,8 @@ class ToyAimmdVisualizer:
             descriptor_dims = self.descriptor_dims
 
         descriptors_total, weights_total,shot_results_total = self.RPE.create_total_trainset()
-
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model=plot_model)
         # H_unweighted,_, _ = self.unweighted_PE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
         H_weighted, _,_ = self.weighted_RPE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
@@ -842,8 +754,9 @@ class ToyAimmdVisualizer:
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         descriptors_total , weights_total, shot_results_total = self.RPE.create_total_trainset()
         loss = snapshot_loss_original(torch.tensor(q_model_RPE),torch.tensor(weights_total),torch.tensor(shot_results_total))
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
 
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         H_unweighted,_, _ = self.unweighted_PE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
 
         H_loss, xedges, yedges = np.histogram2d(descriptors_total[:,descriptor_dims[0]],
@@ -862,40 +775,6 @@ class ToyAimmdVisualizer:
                 extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],alpha=0.6,aspect="auto")
         if fig is not None:
             fig.colorbar(im1)
-
-    def plot_papb_model_RPE_data(self,plot_model, n_bins_2d=100, descriptor_dims=None, ax=None, fig=None, v_min_max=None):
-        if descriptor_dims is None:
-            descriptor_dims = self.descriptor_dims
-        if v_min_max is not None:
-            vmin = v_min_max[0]
-            vmax = v_min_max[1]
-        else:
-            vmin=None
-            vmax=None
-
-        descriptors_total, weights_total,shot_results_total = self.RPE.create_total_trainset()
-
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model=plot_model)
-        # H_unweighted,_, _ = self.unweighted_PE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
-        # H_weighted, _,_ = self.weighted_RPE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
-        H_papb_model, xedges, yedges = np.histogram2d(descriptors_total[:,descriptor_dims[0]],
-                                                descriptors_total[:,descriptor_dims[1]],
-                                                bins=(xedges, yedges),
-                                                weights = p_B_model_RPE[:,0]*(1-p_B_model_RPE[:,0])*weights_total)
-                                                # weights = weights_total)
-        average_pb_model = H_papb_model.T
-
-        # average_q_model = H_q_model.T/H_unweighted.T
-        if ax is None:
-            fig, ax = plt.subplots(1)
-        im1 = ax.imshow(np.log(average_pb_model), interpolation='nearest', origin='lower',cmap=self.cmap,
-                extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],alpha=0.6,aspect="auto", vmin=vmin,vmax=vmax)
-        if fig is not None:
-            fig.colorbar(im1)
-        return im1
-
 
     def plot_committor_model_RPE_data_contours(self, plot_model, n_bins_2d=100, descriptor_dims=None, fig=None, ax=None):
         average_pb_model, average_q_model, xedges, yedges = self.committor_model_2d_RPE(plot_model,n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
@@ -926,35 +805,22 @@ class ToyAimmdVisualizer:
             norm = matplotlib.colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
         else:
             norm=None
-        # extent = [np.mean(xedges[0:2]), np.mean(xedges[-2:]), np.mean(yedges[0:2]), np.mean(yedges[-2:])]
-        extent = [xedges[0], xedges[-1], yedges[0],yedges[-1]]
-
+        
         im1 = ax.imshow(average_q_model, interpolation='nearest', origin='lower',cmap=self.cmap,
-                extent=extent,alpha=0.8,aspect="auto",
+                extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],alpha=1.0,aspect="auto",
                 norm=norm)
+        X, Y = np.meshgrid(xedges[1:], yedges[1:])
         if fig is not None:
             fig.colorbar(im1)
         return im1
 
-    def plot_q_model_RPE_data_contours(self, plot_model, n_bins_2d=100, descriptor_dims=None, fig=None, ax=None,v_min_max=15, colorbar=True ):
-        if v_min_max is int or float:
-            v_min_max = [-v_min_max, v_min_max]
-        if len(v_min_max)==2:
-            vmin = v_min_max[0]
-            vmax = v_min_max[1]
-        else:
-            vmin= None
-            vmax= None
-
+    def plot_q_model_RPE_data_contours(self, plot_model, n_bins_2d=100, descriptor_dims=None, fig=None, ax=None, colorbar=True):
         average_pb_model, average_q_model, xedges, yedges = self.committor_model_2d_RPE(plot_model,n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
-        xedges_center = (xedges[1:]+xedges[:-1])/2
-        yedges_center = (yedges[1:]+yedges[:-1])/2
-        X, Y = np.meshgrid(xedges_center, yedges_center)
-
+        X, Y = np.meshgrid(xedges[1:], yedges[1:])
         if ax is None:
             fig, ax = plt.subplots(1)
-        contour = ax.contour(X, Y,average_q_model ,levels = self.levels_q_model, cmap=self.cmap_RPE_committor_model_contours,vmax=vmax, vmin=vmin, alpha=self.alpha_committor, linewidths=self.linewidth_committor_contour)
-        ax.clabel(contour, inline=1, fontsize=16)
+        contour = ax.contour(X, Y,average_q_model ,levels = self.levels_q_model, cmap=self.cmap_RPE_committor_model_contours, linewidths=self.linewidth_committor_contour)
+        cb = ax.clabel(contour, inline=1, fontsize=16)
         if fig is not None and colorbar:
             cb = fig.colorbar(contour)
             cb.set_label("RPE data q contour")
@@ -966,6 +832,7 @@ class ToyAimmdVisualizer:
         self.plot_potential_contour(ax=ax)
         self.plot_q_model_RPE_data(plot_model, n_bins_2d=n_bins_2d, descriptor_dims=self.descriptor_dims, ax=ax)
         self.plot_q_model_RPE_data_contours(plot_model, n_bins_2d=n_bins_2d, descriptor_dims=self.descriptor_dims, ax=ax)
+        ax.set_title(r'$q$ model on RPE data')    
 
     def plot_committor_RPE_data(self, n_bins_2d=100, descriptor_dims=[0,1], fig=None, ax=None):
         p_B_histogram, xedges, yedges = self.weighted_committor_RPE(n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
@@ -976,7 +843,6 @@ class ToyAimmdVisualizer:
         if fig is not None:
             fig.colorbar(im1)
         
-
     def plot_committor_RPE_data_contours(self, n_bins_2d=100, descriptor_dims=[0,1], fig=None, ax=None):
         p_B_histogram, xedges, yedges = self.weighted_committor_RPE(n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
         X, Y = np.meshgrid(xedges[1:], yedges[1:])
@@ -997,14 +863,12 @@ class ToyAimmdVisualizer:
         ax.set_title(r'$P_b$ contour of the data')
 
     def plot_q_RPE_data(self, n_bins_2d=100, descriptor_dims=[0,1], v_min_max = 15,fig=None, ax=None):
-        if v_min_max is int or float:
-            v_min_max = [-v_min_max, v_min_max]
-        if len(v_min_max)==2:
+        if np.shape(v_min_max)==2:
             vmin = v_min_max[0]
             vmax = v_min_max[1]
         else:
-            vmin= None
-            vmax= None
+            vmin= -v_min_max
+            vmax= v_min_max
         norm = matplotlib.colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
 
         p_B_histogram, xedges, yedges = self.weighted_committor_RPE(n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
@@ -1020,25 +884,13 @@ class ToyAimmdVisualizer:
         return im1
         
     def plot_q_RPE_data_contours(self, n_bins_2d=100, descriptor_dims=[0,1], v_min_max = 15,fig=None, ax=None):
-        if v_min_max is int or float:
-            v_min_max = [-v_min_max, v_min_max]
-        if len(v_min_max)==2:
-            vmin = v_min_max[0]
-            vmax = v_min_max[1]
-        else:
-            vmin= None
-            vmax= None
-
         p_B_histogram, xedges, yedges = self.weighted_committor_RPE(n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
         with np.errstate(divide='ignore'):
             q_histogram = -np.log(1/p_B_histogram-1)
-        xedges_center = (xedges[1:]+xedges[:-1])/2
-        yedges_center = (yedges[1:]+yedges[:-1])/2
-        X, Y = np.meshgrid(xedges_center, yedges_center)
-
+        X, Y = np.meshgrid(xedges[1:], yedges[1:])
         if ax is None:
             fig, ax = plt.subplots(1)
-        contour = ax.contour(X, Y,q_histogram ,levels = self.levels_q_data, cmap=self.cmap_RPE_committor_contours,vmax=vmax, vmin=vmin, alpha=self.alpha_committor, linewidths=self.linewidth_committor_contour)
+        contour = ax.contour(X, Y,q_histogram ,levels = self.levels_q_data, cmap=self.cmap_RPE_committor_contours,vmax=v_min_max, vmin=-v_min_max, alpha=self.alpha_committor, linewidths=self.linewidth_committor_contour)
         ax.clabel(contour, inline=1, fontsize=16)
         if fig is not None:
             cb = fig.colorbar(contour)
@@ -1179,16 +1031,16 @@ class ToyAimmdVisualizer:
             fig_, ax = plt.subplots(1)
         
         self.plot_potential_contour(ax=ax)
-        self.plot_q_RPE_data(n_bins_2d=n_bins_2d, descriptor_dims=self.descriptor_dims, ax=ax,fig=fig)
+        im = self.plot_q_RPE_data(n_bins_2d=n_bins_2d, descriptor_dims=self.descriptor_dims, ax=ax,fig=fig)
         self.plot_q_RPE_data_contours(n_bins_2d=n_bins_2d, descriptor_dims=self.descriptor_dims, ax=ax)
         ax.set_title(r'$q$ contour of the data')
+        return im
         
-    def plot_free_energy_RPE_allong_q_model(self,plot_model, q_bins=None, fig=None, ax=None):
+    def plot_free_energy_RPE_allong_q_model(self,plot_model, fig=None, ax=None):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, _ = self.RPE.create_total_trainset()
-        if q_bins is None:
-            n_bins = 100
-            q_bins = np.linspace(-20,20,n_bins)
+        n_bins = 100
+        q_bins = np.linspace(-20,20,n_bins)
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
                                                        bins=q_bins, weights = weights_total, density=True)
         if ax is None:
@@ -1207,176 +1059,95 @@ class ToyAimmdVisualizer:
             fig, ax = plt.subplots(1,1)
         ax.plot(edges[1:],-np.log(prob_allong_committor)+np.log(prob_allong_committor[int(n_bins/2)]), label="model")
 
-    def plot_loss_allong_q_model(self, plot_model,ax=None, fig=None, density=False,n_bins=100,color="black", normalized=False):
+    def plot_loss_allong_q_model(self, plot_model,ax=None, fig=None, density=False,color='black', linestyle='-', linewidth=3, normalize=False):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        weights_total = weights_total/np.min(weights_total)
-        if normalized:
-            weights_total = weights_total/np.sum(np.sum(shot_results_total, axis=-1) * weights_total)
-        
+        weights_total = weights_total/np.sum(weights_total)
         loss = snapshot_loss_original(torch.tensor(q_model_RPE),torch.tensor(weights_total),torch.tensor(shot_results_total))
+        n_bins = 100
         if density==True:
             density_indicator = "*"
         else:
             density_indicator = ""
-        print("loss original log likelihood loss: ", np.sum(loss.detach().numpy()))
+        if normalize==True:
+            loss = loss/np.sum(weights_total*np.sum(shot_results_total,axis=1))
+        print("loss original log likelihood loss: ", np.sum(loss))
 
+        # prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
+                                                    #    bins=n_bins, weights = loss/np.sum(weights_total*np.sum(shot_results_total,axis=1)), density=density)
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
-                                                       bins=n_bins, weights = loss, density=density)
+                                                    bins=n_bins, weights = loss, density=density)
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\mathcal{L}(q')$ "+ "{}".format(density_indicator),color=color)
-
-
-    def plot_loss_vs_weights(self, plot_model,ax=None, fig=None,normalized=False):
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
-        descriptors_total , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        mask = (descriptors_total[:,0] > 0.05) | (descriptors_total[:,0] < 1.1) 
-        print("mask: ", mask)
-        print("weights_total: ", weights_total[mask])
-        weights_total = weights_total[mask]/np.min(weights_total[mask])
-        if normalized:
-            weights_total = weights_total/np.sum(np.sum(shot_results_total, axis=-1) * weights_total)
-        loss = snapshot_loss_original(torch.tensor(q_model_RPE[mask]),torch.tensor(weights_total),torch.tensor(shot_results_total[mask]))
-
-        ax.scatter(np.log(weights_total),loss)
-
+        ax.plot(edges[1:],prob_allong_q, label=r"$\mathcal{L}(q')$ likelihood"+ "{}".format(density_indicator),color=color, linestyle=linestyle, linewidth=linewidth)
     
-    def plot_loss_distribution(self, plot_model,ax=None, fig=None,normalized=False, reactive=True, distance_range=[0.05,1.1],bins=100):
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
-        descriptors_total , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        print("distance range: ",distance_range)
-        mask_states = (descriptors_total[:,0] > distance_range[0]) & (descriptors_total[:,0] < distance_range[1]) 
-        if reactive:
-            mask_reactive = (shot_results_total[:,0]==1) & (shot_results_total[:,1]==1)
-            mask = mask_states & mask_reactive
-        else:
-            mask = mask_states
-        print("mask: ", mask)
-        print("weights_total: ", weights_total[mask])
-        weights_total = weights_total[mask]/np.min(weights_total[mask])
-        if normalized:
-            weights_total = weights_total/np.sum(np.sum(shot_results_total[mask], axis=-1) * weights_total)
-        
-   
-
-        loss = snapshot_loss_original(torch.tensor(q_model_RPE[mask]),torch.tensor(weights_total),torch.tensor(shot_results_total[mask]))
-        print("loss max:", np.max(loss.detach().numpy()))
-        descriptors_total = descriptors_total[mask]
-        shot_results_total = shot_results_total[mask]
-        q_model_RPE = q_model_RPE[mask]
-        print("descriptors_total[np.argmax(loss),:]", descriptors_total[np.argmax(loss),:])
-        print("shot results total: ", shot_results_total[np.argmax(loss),:])
-        print("weights_total[np.argmax(loss)]", weights_total[np.argmax(loss)])
-        print("q_model_RPE[np.argmax(loss),:]", q_model_RPE[np.argmax(loss)])
-
-
-        print("loss minimum: ", np.min(loss.detach().numpy()))
-        ax.hist(loss,bins=bins)
-
-
-
-    def plot_loss_total_along_q(self, plot_model,ax=None, fig=None,n_bins = 100, normalized=False, ee_par_weight=1, ):
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
-        descriptors_total , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        weights_total = weights_total/np.min(weights_total)
-        loss = snapshot_loss_original(torch.tensor(q_model_RPE),torch.tensor(weights_total),torch.tensor(shot_results_total))
-        loss_smoothness = snapshot_loss_smoothness(plot_model.nnet,descriptors=descriptors_total)/(len(q_model_RPE))
-        loss_total = loss + ee_par_weight*loss_smoothness
-        print("loss total: ", np.mean(loss_total.detach().numpy()))
-        normalization = np.sum(np.sum(shot_results_total, axis=-1) * weights_total) if normalized else 1
-        print("normalization: ", normalization)
-        loss = loss_total/(normalization)
-        print("loss total normalized: ", np.mean(loss.detach().numpy()))
-        prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
-                                                       bins=n_bins, weights = loss, density=False)
-        if ax is None:
-            fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\mathcal{L}(q')$ total")
-    
-
-    def plot_loss_smoothness_along_q_model(self, plot_model,ax=None, fig=None,n_bins = 100, normalized=False, ee_par_weight=1, ):
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
-        descriptors_total , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        weights_total = weights_total/np.min(weights_total)
-        loss = snapshot_loss_smoothness(plot_model.nnet,descriptors=descriptors_total)
-        print("loss smoothness: ", np.mean(loss.detach().numpy()))
-        normalization = np.sum(np.sum(shot_results_total, axis=-1) * weights_total) if normalized else 1
-        print("normalization: ", normalization)
-        loss = ee_par_weight*loss/(len(q_model_RPE)*normalization)
-        print("loss smoothness normalized: ", np.mean(loss.detach().numpy()))
-        prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
-                                                       bins=n_bins, weights = loss, density=False)
-        if ax is None:
-            fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\mathcal{L}(q')$ smoothness")
-    
-    def plot_loss_scaled_q_allong_q_model(self, plot_model,ax=None, fig=None,n_bins = 100):
+    def plot_loss_scaled_q_allong_q_model(self, plot_model,ax=None, fig=None, color='orange', linestyle='-', linewidth=2):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
         loss = snapshot_loss_low_q_scaled(torch.tensor(q_model_RPE),torch.tensor(weights_total),torch.tensor(shot_results_total))
         print("loss scaled q: ", np.sum(loss.detach().numpy())/np.sum(weights_total))
-        
+        n_bins = 100
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
                                                        bins=n_bins, weights = loss/np.sum(weights_total), density=False)
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\mathcal{L}(q')(1+9e^{-q'^2/5})$")
+        ax.plot(edges[1:],prob_allong_q, label=r"$\mathcal{L}(q')(1+9e^{-q'^2/5})$",color=color, linestyle=linestyle, linewidth=linewidth)
     
-    def plot_loss_scaled_weight_sqrtrho(self, plot_model,ax=None, fig=None,n_bins = 100):
+    def plot_loss_scaled_weight_sqrtrho(self, plot_model,ax=None, fig=None, color='orange', linestyle='-', linewidth=2):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
         loss = snapshot_loss_sqrt_rho_weight(torch.tensor(q_model_RPE),torch.tensor(weights_total),torch.tensor(shot_results_total))
         print(r"loss devided by $1/\sqrt{\rho_{RPE}(q)}$)): ", np.sum(loss.detach().numpy())/np.sum(weights_total))
+
+        n_bins = 100
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
                                                        bins=n_bins, weights = loss/np.sum(weights_total), density=False)
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\ln \mathcal{L}(q')/\sqrt{\rho_{RPE}(q')}$")
+        ax.plot(edges[1:],prob_allong_q, label=r"$\ln \mathcal{L}(q')/\sqrt{\rho_{RPE}(q')}$",color=color, linestyle=linestyle, linewidth=linewidth)
 
-    def plot_loss_normalized_q_allong_q_model(self, plot_model,ax=None, fig=None, density=False,n_bins = 100,color="black",normalized=False):
+    def plot_loss_normalized_q_allong_q_model(self, plot_model,ax=None, fig=None, density=False, color='orange', linestyle='-', linewidth=2):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        weights_total = weights_total/np.min(weights_total)
-        H_q, q_bins = np.histogram(q_model_RPE, bins=100, density=True)
-        q_bin_indices = np.digitize(q_model_RPE, q_bins[:-1])-1
-        normalization = 1/np.sum(np.sum(shot_results_total, axis=-1) * weights_total) if normalized else 1
-        scaling = torch.tensor(np.nan_to_num(1/H_q[q_bin_indices])[:,0]).float().numpy()
-        weights_total = weights_total*scaling*normalization
         loss = snapshot_loss_original(torch.tensor(q_model_RPE),torch.tensor(weights_total),torch.tensor(shot_results_total))
+        n_bins = 100
         density_indicator_loss = ""
         if density==True:
             density_indicator = "*"
         else:
             density_indicator = ""
         loss_allong_q ,edges= np.histogram(q_model_RPE[:,0],
-                                                       bins=n_bins, weights = loss)
+                                                       bins=n_bins, weights = loss/np.sum(weights_total))
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
-                                                bins=n_bins, density=density)
+                                                bins=n_bins, weights=np.sum(shot_results_total,axis=1), density=density)
         
- 
-        print(r"loss devided by $1/rho_PE(q))$: ", np.sum((loss).detach().numpy()))
+        H_q, q_bins = np.histogram(q_model_RPE, bins=100, density=True)
+        q_bin_indices = np.digitize(q_model_RPE, q_bins[:-1])-1
+        scaling = torch.tensor(np.nan_to_num(1/H_q[q_bin_indices])[:,0]).float()
+        print(r"loss devided by $1/rho_PE(q))$: ", np.sum((loss*scaling).detach().numpy())/np.sum(weights_total))
 
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],loss_allong_q, label=r"$ \mathcal{L}(q')$"+ "{}".format(density_indicator_loss)+r"$/rho^{PE}(q')$"+ "{}".format(density_indicator),color=color)
+        ax.plot(edges[1:],loss_allong_q/prob_allong_q, label=r"$\mathcal{L}(q')$"+ "{}".format(density_indicator_loss)+r"$/N^{TIS}_{PE}(q')$"+ "{}".format(density_indicator),color=color, linestyle=linestyle, linewidth=linewidth)
 
-
-    def plot_distribution_of_points_allong_q_model(self, plot_model,ax=None, fig=None, density=False,n_bins = 100):
+    def plot_distribution_of_points_allong_q_model(self, plot_model,ax=None, fig=None, density=False, color='black', linestyle='-', linewidth=2):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
+        _ , _, shot_results_total = self.RPE.create_total_trainset()
+        n_bins = 100
         if density==True:
             density_indicator = "*"
         else:
             density_indicator = ""
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
-                                                       bins=n_bins, density=density)
+                                                       bins=n_bins,weights=np.sum(shot_results_total,axis=1), density=density)
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\rho^{PE}(q')$ "+"{}".format(density_indicator))
+        ax.plot(edges[1:],prob_allong_q, label=r"$N^{TIS}_{PE}(q')$ "+"{}".format(density_indicator),color=color, linestyle=linestyle, linewidth=linewidth)
 
-    def plot_pAandpB_of_RPE_data_allong_q_model(self, plot_model,ax=None, fig=None,n_bins=100):
+    def plot_pAandpB_of_RPE_data_allong_q_model(self, plot_model,ax=None, fig=None, color_A='red',color_B='blue', linestyle='-', linewidth=2):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
+        n_bins = 1000
         rhoA_allong_q ,edges= np.histogram(q_model_RPE[:,0],
                                                        bins=n_bins, weights=weights_total*shot_results_total[:,0], density=False)
         rhoB_allong_q, edges= np.histogram(q_model_RPE[:,0],
@@ -1387,36 +1158,39 @@ class ToyAimmdVisualizer:
 
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],p_A_allong_q, label=r"$p_A^{RPE}(q')$")
-        ax.plot(edges[1:],p_B_allong_q, label=r"$p_B^{RPE}(q')$")
+        ax.plot(edges[1:],p_A_allong_q, label=r"$p_A^{RPE}(q')$",color=color_A, linestyle=linestyle, linewidth=linewidth)
+        ax.plot(edges[1:],p_B_allong_q, label=r"$p_B^{RPE}(q')$",color=color_B, linestyle=linestyle, linewidth=linewidth)
         return edges, p_A_allong_q, p_B_allong_q
 
-    def plot_plnp_allong_q_model(self, plot_model,ax=None, fig=None,n_bins=100):
+
+    def plot_plnp_allong_q_model(self, plot_model,ax=None, fig=None, color="purple", linestyle="dotted"):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
-        weights_total *= 1/np.sum(weights_total)
+        weights_total *= 1/np.sum(weights_total*np.sum(shot_results_total,axis=1))
         loss = snapshot_loss_original(torch.tensor(q_model_RPE),torch.tensor(weights_total), torch.tensor(shot_results_total))
+        n_bins = 100
         prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],
                                                        bins=n_bins, weights = loss, density=False)
         n_q ,edges= np.histogram(q_model_RPE[:,0],
                                                 bins=n_bins,weights = weights_total, density=False)
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q/n_q, label=r"$p^{RPE}(q')\ln p^{model}(q')$")
+        ax.plot(edges[1:],prob_allong_q/n_q, label=r"$p_{A/B}^{RPE}(q')\ln p_{A/B}^{model}(q')$", color=color, linestyle=linestyle)
     
-    def plot_weight_allong_q_model(self, plot_model,ax=None, fig=None, density=False,n_bins=100):
+    def plot_weight_allong_q_model(self, plot_model,ax=None, fig=None, density=False,color="green", linestyle="dashed"):
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         _ , weights_total, shot_results_total = self.RPE.create_total_trainset()
         weights_total *= 1/np.sum(weights_total)
 
+        n_bins = 100
         if density==True:
             density_indicator = "*"
         else:
             density_indicator = ""
-        prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],bins=n_bins, weights = weights_total,density=density)
+        prob_allong_q ,edges= np.histogram(q_model_RPE[:,0],bins=100, weights = weights_total,density=density)
         if ax is None:
             fig, ax = plt.subplots(1,1)
-        ax.plot(edges[1:],prob_allong_q, label=r"$\rho^{RPE}(q')$ "+"{}".format(density_indicator))
+        ax.plot(edges[1:],prob_allong_q, label=r"$\rho^{RPE}(q')$ "+"{}".format(density_indicator), color=color,linestyle=linestyle)
 
     def compute_components_theoretical_loss(self, theoretical_committor_path, n_x, n_y=None):
         if n_y is None:
@@ -1575,7 +1349,7 @@ class ToyAimmdVisualizer:
             fig,ax=plt.subplots(1,1)
         ax.scatter(x_value_allong_q[0,:],x_value_allong_q[1,:], color="black",s=2 )
     
-    def scatter_rc_minima_path(self, plot_model, q_bins=np.arange(-12,12,0.1), descriptor_dims=[0,1], ax=None,fig=None, rolling_mean=1):
+    def scatter_rc_minima_path(self, plot_model, q_bins=np.arange(-12,12,0.1), descriptor_dims=[0,1], ax=None,fig=None,rolling_mean=1):
         descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         ind_bin_x = np.digitize(q_model_RPE, q_bins, right=False)
@@ -1596,7 +1370,8 @@ class ToyAimmdVisualizer:
                 pathx,bins= np.histogram(descriptors_total[ind_x_bin,descriptor_dims[i_dim]], bins=100, weights=weights_total[ind_x_bin], density=True)
                 x_value_allong_q[i_dim,bin]= bins[np.argmax(pathx)]
         ax.scatter(self.moving_average(x_value_allong_q[0,:],rolling_mean),self.moving_average(x_value_allong_q[1,:],rolling_mean), color="black",s=3, alpha=0.3+0.7*(bin/len(q_bins)) )
-        
+    
+    
     def scatter_rc_deriv_rho(self, plot_model, q_bins=np.linspace(-12,12,80), descriptor_dims=[0,1], ax=None,fig=None):
         descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
@@ -1620,29 +1395,6 @@ class ToyAimmdVisualizer:
                 x_value_allong_q[dim,bin]= bins[np.argmax(pathx)]
         ax.scatter(self.moving_average(x_value_allong_q[0,:],5),self.moving_average(x_value_allong_q[1,:],5), color="black",s=3 )
     
-    def mean_descriptors_along_q_normalized_per_q_reactive_paths(self, plot_model, n_descriptors=22, q_bins=np.linspace(-12,12,40),ax=None,fig=None, rolling_mean=1, plot=True):
-        descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
-        x_value_allong_q = np.zeros((n_descriptors,len(q_bins)-1))
-        x_rolling_average = np.zeros((n_descriptors,len(q_bins)-1))
-
-        indices = np.where(np.all(shot_results_total == 1, axis=1))[0]
-        weight_TP = np.zeros(len(descriptors_total))
-        weight_TP[indices] = 1
-        normalization,bins = np.histogram(q_model_RPE[:,0], bins=q_bins, weights=weights_total*weight_TP, density=False)
-
-        if ax is None and plot:
-            fig,ax=plt.subplots(1,1)
-        for dim in range(n_descriptors):
-            pathx,bins= np.histogram(q_model_RPE[:,0], bins=q_bins, weights=descriptors_total[:,dim]*weights_total*weight_TP, density=False)
-            x_value_allong_q[dim,:]= pathx/normalization
-            x_rolling_average[dim,:] = self.moving_average(x_value_allong_q[dim,:],rolling_mean)
-            if plot:
-                q_bins_center = (q_bins[1:]-q_bins[:-1])/2
-                ax.plot(q_bins[1:],x_rolling_average[dim,:], label=dim)
-
-        return x_value_allong_q, x_rolling_average, bins
-
     def moving_average(self,data, window_size):
         y_padded = np.pad(data, (window_size//2, window_size-1-window_size//2), mode='edge')
         y_smooth = np.convolve(y_padded, np.ones((window_size,))/window_size, mode='valid') 
@@ -1694,24 +1446,7 @@ class ToyAimmdVisualizer:
         if fig is not None:
             cb = fig.colorbar(im1)
             cb.set_label(r"Density")
-        
-    def scatter_allong_q_extreme_weights(self,plot_model, descriptor_dims = [0,1], q_bins=np.linspace(-12,12,40),ax=None,fig=None, plot=True, rolling_mean=1):
-        descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
-        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
-        ind_bin_x = np.digitize(q_model_RPE, q_bins, right=False)
-
-
-        if ax is None and plot:
-            fig,ax=plt.subplots(1,1)
-        pathx = np.zeros((len(q_bins)-1, np.shape(descriptors_total)[1]))
-        for bin in range(len(q_bins[1:])):
-            ind_x_bin = np.where(ind_bin_x==bin)[0]
-            pathx[bin]= np.average(descriptors_total[ind_x_bin,:], weights=weights_total[ind_x_bin],axis=0)
-        if plot:
-            ax.scatter(pathx[:,descriptor_dims[0]],pathx[:,descriptor_dims[1]], color="black",s=2 )
-        
-        return pathx, q_bins
-        
+    
     def descriptors_distribution_along_q_normalized_per_q(self, plot_model, index_descriptor=0, q_bins=np.linspace(-12,12,40),ax=None,fig=None):
         descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
@@ -1727,9 +1462,11 @@ class ToyAimmdVisualizer:
             for i in range(len(pathx)):
                 ax.fill_betweenx([bins[i], bins[i + 1]], q_bins[bin] , q_bins[bin+1], 
                 color=plt.cm.Blues(pathx[i]), alpha=0.7)
-                ax.set_xlabel(r"$q(x)$ model")
+                ax.set_xlabel(r"$q(x|\theta)$")
                 ax.set_ylabel(r"$x$"+"{}".format(index_descriptor))
         
+        
+    
     def descriptors_distribution_along_q_normalized_per_q_reactive_paths(self, plot_model, index_descriptor=0, q_bins=np.linspace(-12,12,40),ax=None,fig=None):
         descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
@@ -1750,11 +1487,35 @@ class ToyAimmdVisualizer:
                 ax.set_xlabel(r"$q(x)$ model")
                 ax.set_ylabel(r"$x$"+"{}".format(index_descriptor))
 
-    def minimum_energy_rc_descriptors_allong_q(self, plot_model, n_descriptors=22, q_bins=np.arange(-12,12,0.1),ax=None,fig=None,plot=True,rolling_mean=1):
+    def mean_descriptors_along_q_normalized_per_q_reactive_paths(self, plot_model, n_descriptors=22, q_bins=np.linspace(-12,12,40),ax=None,fig=None, rolling_mean=1, plot=True):
+        descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
+        p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
+        normalization,q_bins = np.histogram(q_model_RPE[:,0], bins=q_bins, weights=weights_total,density=False)
+        x_value_allong_q = np.zeros((n_descriptors,len(q_bins)-1))
+        x_rolling_average = np.zeros((n_descriptors,len(q_bins)-1))
+
+        indices = np.where(np.all(shot_results_total == 1, axis=1))[0]
+        weight_TP = np.zeros(len(descriptors_total))
+        weight_TP[indices] = 1
+        normalization,bins = np.histogram(q_model_RPE, bins=q_bins, weights=weights_total*weight_TP, density=False)
+
+        if ax is None:
+            fig,ax=plt.subplots(1,1)
+        for dim in range(n_descriptors):
+            pathx,bins= np.histogram(q_model_RPE, bins=q_bins, weights=descriptors_total[:,dim]*weights_total*weight_TP, density=False)
+            x_value_allong_q[dim,:]= pathx/normalization
+            x_rolling_average[dim,:] = self.moving_average(x_value_allong_q[dim,:],rolling_mean)
+            if plot:
+                q_bins_center = (q_bins[1:]-q_bins[:,-1])/2
+                ax.plot(q_bins_center,x_rolling_average[dim,:], label=dim)
+
+        return x_value_allong_q, x_rolling_average, bins
+
+
+    def minimum_energy_rc_descriptors_allong_q(self, plot_model, n_descriptors=22, q_bins=np.arange(-12,12,0.1),ax=None,fig=None,plot=True,rolling_mean=5):
         descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
         ind_bin_x = np.digitize(q_model_RPE, q_bins, right=False)
-
         if ax is None and plot:
             fig,ax=plt.subplots(1,1)
         x_value_allong_q = np.zeros((n_descriptors,len(q_bins)-1))
@@ -1772,32 +1533,27 @@ class ToyAimmdVisualizer:
             x_rolling_average[dim,:] = self.moving_average(x_value_allong_q[dim,:],rolling_mean)
             if plot:
                 ax.plot(q_bins[1:],x_rolling_average[dim,:], label=dim)
+        if ax is not None:
+            ax.set_xlabel(r"$q(x|\theta)$")
         return x_value_allong_q, x_rolling_average, q_bins
-    
-    def model_loss_plnp_weight_allong_q(self, plot_model, q_min=-20,q_max=20):
-  
-        fig, ax = plt.subplots(1,2,figsize=(14,5))
-        self.plot_loss_allong_q_model(plot_model, ax=ax[0])
-        self.plot_plnp_allong_q_model(plot_model, ax=ax[0])
-        self.plot_weight_allong_q_model(plot_model, ax=ax[0])
-        # visualizer.plot_distribution_of_points_allong_q_model(plot_model=best_model,ax=ax, density=False)
-        # visualizer.plot_loss_normalized_q_allong_q_model(plot_model=best_model, ax=ax,density=True)
-        ax[0].legend(loc='upper left', bbox_to_anchor=(1, 1))
-        ax[0].set_yscale("log")
-        ax[0].set_xlabel("q'")
-        ax[0].grid()
 
-        xedges, _, _ = self.plot_pAandpB_of_RPE_data_allong_q_model(plot_model,ax=ax[1])
-        q_space = xedges
-        ax[1].plot(q_space, 1/(1+np.exp(q_space)), label=r"$p_A(q')$ Theory")
-        ax[1].plot(q_space, 1/(1+np.exp(-q_space)), label=r"$p_B(q')$ Theory")
 
-        ax[1].legend(loc='upper left', bbox_to_anchor=(1, 1))
-        ax[1].set_yscale("log")
-        ax[1].set_xlabel("q'")
-        ax[1].set_xlim([xedges[0],xedges[-1]])
-        ax[1].grid()
-        fig.tight_layout()
+    def model_loss_plnp_weight_allong_q(self, plot_model):
+        fig, ax = plt.subplots(1,1)
+        self.plot_loss_allong_q_model(plot_model, ax=ax)
+        self.plot_loss_scaled_q_allong_q_model(plot_model, ax=ax)
+        self.plot_loss_scaled_weight_sqrtrho(plot_model, ax=ax)
+        self.plot_loss_normalized_q_allong_q_model(plot_model, ax=ax)
+        self.plot_plnp_allong_q_model(plot_model, ax=ax)
+        self.plot_weight_allong_q_model(plot_model, ax=ax)
+        q = np.linspace(-20,20,200)
+        pb = 1/(1+np.exp(-q))
+        plnp = -(pb*np.log(pb) + (1-pb)*np.log(1-pb))
+        ax.plot(q,plnp,label="optimal plnp")
+        ax.set_yscale("log")
+        ax.grid()
+        ax.legend(bbox_to_anchor=(1.1, 0.9))
+        plt.show()
 
     def model_projections(self,plot_model):
         fig, ax = plt.subplots(1,2, figsize=(10,5)) 
@@ -1806,19 +1562,21 @@ class ToyAimmdVisualizer:
         fig.tight_layout()
         plt.show()
 
-    def density_given_q_model_value_range(self,plot_model, q_value_range, descriptors=None, descriptor_dims = [0,1], ax=None,fig=None, n_bins_2d=100, cmap=None):
+
+
+    def density_given_q_model_value_range(self,plot_model, q_value_range, descriptors=None, descriptor_dims = [0,1], ax=None,fig=None):
         if descriptors is None:
             descriptors, weights, shot_results_total = self.RPE.create_total_trainset()
         else: 
             weights = np.ones(np.shape(descriptors)[0])
             
+        q_min,q_max = -10,10
         p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model, descriptors_total=descriptors)
         # q_bins = np.linspace(q_value_range[0],q_value_range[1],2)
         # ind_bin_x = np.digitize(q_model_RPE, q_bins, right=False)
         # print(q_bins)
         # normalization,q_bins = np.histogram(q_model_RPE[:,0], bins=q_bins, weights=weights_total)
-        if cmap is None:
-            cmap = matplotlib.cm.get_cmap('Spectral')
+        cmap = matplotlib.cm.get_cmap('Spectral')
         # print(np.shape(ind_bin_x))
         # print(ind_bin_x)
         points_in_bin = (q_model_RPE >= q_value_range[0]) & (q_model_RPE < q_value_range[1])
@@ -1828,8 +1586,9 @@ class ToyAimmdVisualizer:
         # print(np.shape(descriptors))
         # print(np.shape(points_in_bin))
         # print(np.shape(dim_descriptors))
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
+        n_bins_2d =100
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], n_bins_2d)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], n_bins_2d)
         if ax is None:
             fig,ax=plt.subplots(1,1)
         H_given_q, xedges, yedges = np.histogram2d(descriptors[points_in_bin,descriptor_dims[0]],
@@ -1837,8 +1596,9 @@ class ToyAimmdVisualizer:
                                         bins=(xedges, yedges), weights = weights[points_in_bin], density=True)
         H_given_q = np.where(H_given_q==0, np.nan, H_given_q)
 
-        im1 = ax.imshow(H_given_q.T, interpolation='nearest', origin='lower',cmap=cmap,
+        im1 = ax.imshow(H_given_q.T, interpolation='nearest', origin='lower',cmap="Spectral",
                 extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], alpha=0.7, aspect="auto")
+
 
     def plot_gradient_field_2d(self, model, grid_size=20, ax=None):
         """
@@ -1858,8 +1618,8 @@ class ToyAimmdVisualizer:
             The number of input dimensions (default is 22).
         """
         # Create a grid of x and y values
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=grid_size)
-
+        xedges = np.linspace(self.dims_extent[0], self.dims_extent[1], grid_size)
+        yedges = np.linspace(self.dims_extent[2], self.dims_extent[3], grid_size)
         X,Y = np.meshgrid(xedges,yedges)
         
         # Initialize arrays to store gradients for each point in the grid
@@ -1897,71 +1657,7 @@ class ToyAimmdVisualizer:
         ax.quiver(X, Y, dfdx, dfdy, color='b')
         ax.set_title('Gradient Vectors of Model Output in 2D (x, y)')
 
-    # def plot_grad_average(self, model, epsilon=1e-3, ax=None, bins=10,scale=1):
-    #     # Create the trainset (descriptors, weights, and shot_results_total from RPE)
-    #     descriptors, weights, shot_results_total = self.RPE.create_total_trainset()
-    #     # Initialize arrays to store the gradients
-    #     dfdx = np.zeros(np.shape(descriptors))
-    #     norm = 1/np.max(descriptors,axis=0)
-
-
-    #     # Iterate over each descriptor to compute gradients
-    #     # Create input tensor from the descriptor, setting requires_grad=True
-    #     input_tensor = torch.tensor(descriptors, requires_grad=True, device=model._device, dtype=torch.float32)
-    #     model.nnet.eval()
-    #     # Forward pass: compute the output
-    #     output = model.nnet(input_tensor)
-        
-    #     # Backward pass: compute the gradient of the output with respect to input
-    #     output.backward(torch.ones_like(output))
-
-    #     # Store the gradients with respect to the 0th and 1st dimensions
-    #     gradients = input_tensor.grad.cpu().numpy()/norm
-
-    #     # Zero the gradients for the next iteration
-    #     model.nnet.zero_grad()
-    #     model.nnet.train()
-    #     # Stack the gradients into a single array for easy manipulation
-    #     # gradients = np.stack((dfdx, dfdy), axis=1)
-        
-    #     # Compute the magnitude of the gradient
-    #     gradient_magnitude = np.linalg.norm(gradients, axis=1)
-
-    #     # Check if gradients are below the threshold epsilon and count them
-    #     below_threshold = np.sum(gradient_magnitude < epsilon)
-    #     print(f"Number of points with gradient magnitude below {epsilon}: {below_threshold}")
-
-    #     # Now we compute the 2D histogram, weighted by the given weights
-    #     xedges, yedges = self.create_x_y_edges(n_bins_2d=bins)
-    #     # H_unweighted,_, _ = self.unweighted_PE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
-    #     H_weighted, _,_ = self.weighted_RPE(n_bins_2d=bins,descriptor_dims=self.descriptor_dims)
-    #     H_dfdx, xedges, yedges = np.histogram2d(descriptors[:,self.descriptor_dims[0]],
-    #                                             descriptors[:,self.descriptor_dims[1]],
-    #                                             bins=(xedges, yedges),
-    #                                             weights = gradients[:,self.descriptor_dims[0]]*weights)
-    #     H_dfdy, xedges, yedges = np.histogram2d(descriptors[:,self.descriptor_dims[0]],
-    #                                     descriptors[:,self.descriptor_dims[1]],
-    #                                     bins=(xedges, yedges),
-    #                                     weights = gradients[:,self.descriptor_dims[1]]*weights)
-    #     average_dfdx = H_dfdx.T/H_weighted.T
-    #     average_dfdy = H_dfdy.T/H_weighted.T
-
-    #     # Plotting the average gradient on a 2D histogram if an axis is provided
-    #     if ax is None:
-    #         fig, ax = plt.subplots()
-
-    #     # Create the 2D histogram plot
-    #     x_center = (xedges[:-1] + xedges[1:]) / 2
-    #     y_center = (yedges[:-1] + yedges[1:]) / 2
-    #     X, Y = np.meshgrid(x_center, y_center)
-        
-    #     ax.quiver(X, Y, average_dfdx,average_dfdy, color='b', scale_units="x",scale=scale)
-
-    #     ax.set_title(f"Weighted Average Gradient on projected on xy-plane")
-
-    #     return below_threshold
-    
-    def plot_grad_average(self, model, epsilon=1e-3, ax=None, bins=10, descriptor_dims=[0,1]):
+    def plot_grad_average(self, model, epsilon=1e-3, ax=None, bins=10):
         # Create the trainset (descriptors, weights, and shot_results_total from RPE)
         descriptors, weights, shot_results_total = self.RPE.create_total_trainset()
         # Initialize arrays to store the gradients
@@ -2025,83 +1721,6 @@ class ToyAimmdVisualizer:
 
         return below_threshold
 
-
-    def plot_logcurrent_pb(self, model, epsilon=1e-3, ax=None, bins=10,log=False,scale=1):
-        # Create the trainset (descriptors, weights, and shot_results_total from RPE)
-        descriptors, weights, shot_results_total = self.RPE.create_total_trainset()
-        # Initialize arrays to store the gradients
-        dfdx = np.zeros(np.shape(descriptors))
-
-
-        # Iterate over each descriptor to compute gradients
-        # Create input tensor from the descriptor, setting requires_grad=True
-        input_tensor = torch.tensor(descriptors, requires_grad=True, device=model._device, dtype=torch.float32)
-        model.nnet.eval()
-        # Forward pass: compute the output
-        output = model.nnet(input_tensor)
-        norm = 1/np.max(descriptors,axis=0)
-        
-        # Backward pass: compute the gradient of the output with respect to input
-        output.backward(torch.ones_like(output))
-
-        # Store the gradients with respect to the 0th and 1st dimensions
-        gradients = input_tensor.grad.cpu().numpy()/norm
-        pb = 1/(1+np.exp(-output.detach().cpu().numpy()))
-        pa = 1/(1+np.exp(output.detach().cpu().numpy()))
-
-        current= pa*pb*gradients
-        # Zero the gradients for the next iteration
-        model.nnet.zero_grad()
-        model.nnet.train()
-        # Stack the gradients into a single array for easy manipulation
-        # gradients = np.stack((dfdx, dfdy), axis=1)
-        # Compute the magnitude of the gradient
-        gradient_magnitude = np.linalg.norm(gradients, axis=1)
-
-        # Check if gradients are below the threshold epsilon and count them
-        below_threshold = np.sum(gradient_magnitude < epsilon)
-        print(f"Number of points with gradient magnitude below {epsilon}: {below_threshold}")
-
-        # Now we compute the 2D histogram, weighted by the given weights
-        weights = weights #normalize the weights
-        xedges, yedges = self.create_x_y_edges(n_bins_2d=bins)
-        # H_unweighted,_, _ = self.unweighted_PE(n_bins_2d=n_bins_2d,descriptor_dims=descriptor_dims)
-        H_weighted, _,_ = self.weighted_RPE(n_bins_2d=bins,descriptor_dims=self.descriptor_dims)
-        H_dfdx, xedges, yedges = np.histogram2d(descriptors[:,self.descriptor_dims[0]],
-                                                descriptors[:,self.descriptor_dims[1]],
-                                                bins=(xedges, yedges),
-                                                weights = current[:,self.descriptor_dims[0]]*weights)
-        H_dfdy, xedges, yedges = np.histogram2d(descriptors[:,self.descriptor_dims[0]],
-                                        descriptors[:,self.descriptor_dims[1]],
-                                        bins=(xedges, yedges),
-                                        weights = current[:,self.descriptor_dims[1]]*weights)
-        
-        # average_dfdx = H_dfdx.T/H_weighted.T
-        # average_dfdy = H_dfdy.T/H_weighted.T
-        if log:
-            marginalized_magnitude = np.sqrt(H_dfdx.T**2 + H_dfdy.T**2)
-            average_dfdx = H_dfdx.T/marginalized_magnitude*np.log(marginalized_magnitude)
-            average_dfdy = H_dfdy.T/marginalized_magnitude*np.log(marginalized_magnitude)
-        else:
-            average_dfdx = H_dfdx.T
-            average_dfdy = H_dfdy.T
-
-
-        # Plotting the average gradient on a 2D histogram if an axis is provided
-        if ax is None:
-            fig, ax = plt.subplots()
-
-        # Create the 2D histogram plot
-        x_center = (xedges[:-1] + xedges[1:]) / 2
-        y_center = (yedges[:-1] + yedges[1:]) / 2
-        X, Y = np.meshgrid(x_center, y_center)
-        
-        ax.quiver(X, Y, average_dfdx,average_dfdy, color='b',scale_units='x', scale=scale)
-
-        ax.set_title(f"Weighted Average Gradient on projected on xy-plane")
-
-        return below_threshold
-
     def create_path_from_gradient(self, model, x_A, q_max = 14, alpha=0.01, max_steps=1000, grad_threshold=1e-5):
         """
         Generates a path from point A by following the gradient of q(x), using gradient calculations 
@@ -2157,6 +1776,7 @@ class ToyAimmdVisualizer:
             print("The model is not monotonically increasing!")
         return np.array(q_path), np.array(path), decreasing_points
 
+
     # def hipr_allong_q(self, plot_model, index_descriptors=[0, 1], q_bins=np.linspace(-12, 12, 25), ax=None, fig=None, hipr_plus=False):
     #     descriptors_total, weights_total, shot_results_total = self.RPE.create_total_trainset()
     #     p_B_model_RPE, q_model_RPE = self.model_output_RPE(plot_model)
@@ -2187,7 +1807,7 @@ class ToyAimmdVisualizer:
     #     bin_centers = (q_bins[:-1] + q_bins[1:]) / 2
 
     #     for dim in index_descriptors:
-    #         ax.errorbar(bin_centers, hipr_per_q_bin[:, dim], yerr=hipr_per_q_bin_std[:, dim], fmt="o", capsize=5, label="dim {}".format(dim))
+    #         ax.errorbar(bin_centers, hipr_per_q_bin[:, dim], yerr=hipr_per_q_bin_std[:, dim], fmt=".", capsize=3, label="dim {}".format(dim))
 
     #     # Adding titles and labels
     #     ax.set_title('HIPR Analysis Across q Bins')

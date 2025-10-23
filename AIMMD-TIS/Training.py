@@ -94,7 +94,6 @@ def train_function(model, trainset, testset, n_epochs= 10, batch_size=4096, disp
 
 
 
-
 """
 Snapshots loss functions
 """
@@ -116,6 +115,50 @@ def snapshot_loss_original(q_output, weights_tensor, shot_results_tensor):
     zeros = torch.zeros_like(t1)
     return weights*(torch.where(shots[:, 0] == 0, zeros, t1)
                        + torch.where(shots[:, 1] == 0, zeros, t2))
+
+"""
+Snapshot loss functions for smoothness 
+"""
+
+def snapshot_loss_smoothness(
+    q_pred: torch.Tensor,           # [N, 1] or [N]; MUST keep graph back to `descriptors`
+    descriptors: torch.Tensor,      # [N, D]; requires_grad=True (we set it if not)
+    reduction: str = "none",        # "none" -> [N], "mean" -> scalar, "sum" -> scalar
+):
+    """
+    Point-wise smoothness penalty:
+        For each sample i, s_i = mean_d ( |∂q_i/∂x_{i,d}|^2 ).
+    If per_dim=True, returns |∂q/∂x|^2 per-dimension instead of the mean.
+
+    Notes:
+    - Assumes no cross-sample ops between `descriptors` and `q_pred`.
+    - Use model.eval() for analysis if BatchNorm/etc. would couple samples.
+    """
+    if not descriptors.requires_grad:
+        descriptors.requires_grad_(True)
+
+    q = q_pred.view(-1, 1)  # [N,1]
+    grad = torch.autograd.grad(
+        outputs=q,                           # [N,1]
+        inputs=descriptors,                  # [N,D]
+        grad_outputs=torch.ones_like(q),     # JVP with ones
+        create_graph=False,
+        retain_graph=False
+    )[0]                                     # [N,D]
+
+    grad_sq = (grad.abs() ** 2)              # [N,D]
+
+    out = grad_sq.mean(dim=1)            # [N], matches your global `.mean()` over D
+
+    if reduction == "mean":
+        out = out.mean()
+    elif reduction == "sum":
+        out = out.sum()
+    elif reduction != "none":
+        raise ValueError("reduction must be 'none', 'mean', or 'sum'")
+
+    return out.detach() 
+
 
 def snapshot_loss_normalized_q(q_output, weights_tensor, shot_results_tensor):
     """

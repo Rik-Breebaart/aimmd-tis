@@ -23,7 +23,6 @@ from openpathsampling.experimental.storage import Storage
 import os 
 # Monkey patch OpenPathSampling to use experimental features
 import pickle
-paths = monkey_patch_all(paths)
 '''
 
 What is required for TIS_AIMMD runs
@@ -109,11 +108,34 @@ class AIMMD_TIS:
 
         print("Creating network...")
         if direction=="forward":
-            intersectionVolumeInterface =  paths.VolumeInterfaceSet(self.cv_q, minvals=-float("inf"), maxvals=interface_value, intersect_with=self.stateA) #for interface of paths going from A to B
-            network = paths.MISTISNetwork([(self.stateA, intersectionVolumeInterface, self.stateB)]).named('mstis')
+            # Define the interface volume where cv_q <= interface_value
+            InterfaceVolume = paths.VolumeInterfaceSet(self.cv_q, minvals=-float("inf"), maxvals=interface_value)
+
+            UnionVolumeStateA = paths.UnionVolume(InterfaceVolume[0], self.stateA)
+
+            # Refine the interface to exclude state A
+            InterfaceOutStateVolume = paths.VolumeInterfaceSet(
+                self.cv_q, 
+                minvals=-float("inf"), 
+                maxvals=interface_value, 
+                intersect_with=UnionVolumeStateA
+            )
+            # Create a MISTIS network for transitions: A -> Interface -> B
+            network = paths.MISTISNetwork([(self.stateA, InterfaceOutStateVolume, self.stateB)]).named('mstis')
+
         elif direction=="backward":
-            intersectionVolumeInterface = paths.VolumeInterfaceSet(self.cv_q, minvals=interface_value, maxvals=float("inf"), intersect_with=self.stateB) #for interface of paths going from A to B
-            network = paths.MISTISNetwork([(self.stateB, intersectionVolumeInterface, self.stateA)]).named('mstis')
+            # Define the interface volume where cv_q >= interface_value
+            InterfaceVolume = paths.VolumeInterfaceSet(self.cv_q, minvals=interface_value, maxvals=float("inf"))
+
+            # Combine the interface volume with state B
+            UnionVolumeStateB = paths.UnionVolume(InterfaceVolume[0], self.stateB)
+
+            # Refine the interface to exclude state B
+            InterfaceOutStateVolume = paths.VolumeInterfaceSet(self.cv_q, minvals=interface_value, maxvals=float("inf"), intersect_with=UnionVolumeStateB) 
+
+            # Create a MISTIS network for transitions: B -> Interface -> A
+            network = paths.MISTISNetwork([(self.stateB, InterfaceOutStateVolume, self.stateA)]).named('mstis')
+
         else:
             NameError("incorrect direction method has been given, choose from either 'forward' or 'backward'")
         
