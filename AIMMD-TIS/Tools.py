@@ -306,6 +306,8 @@ def potential_switch(potential_name, settings):
             pes = potential_Face(n_harmonics=settings["n_harmonics"], rotation_degrees=settings["rotation_degrees"], scale=settings["scale"])
         else :
             pes = potential_Face(n_harmonics=settings["n_harmonics"])
+    elif potential_name == "MullerBrown":
+        pes = potential_MullerBrown(n_harmonics=settings["n_harmonics"])
     else :
         ValueError("unknown potential name given, choose from either: 'potential_0', 'potential_1', 'potential_2', 'potential_3', 'potential_4', 'linear_q', 'wolfe-quapp' or 'z-potential'. ")
 
@@ -384,12 +386,11 @@ def figure_storage_path(filename, suffix=".pdf",output_path=None):
     return Path(output_path / filename).with_suffix(suffix)
 
 
-def save_fig_pdf_and_png(fig, filename, output_path=None):
-    fig.savefig(figure_storage_path(filename, suffix=".pdf", output_path=output_path))
-    fig.savefig(figure_storage_path(filename, suffix=".png", output_path=output_path))
+def save_fig_pdf_and_png(fig, filename, output_path=None, *args, **kwargs):
+    fig.savefig(figure_storage_path(filename, suffix=".pdf", output_path=output_path),*args, **kwargs)
+    fig.savefig(figure_storage_path(filename, suffix=".png", output_path=output_path),*args, **kwargs)   
 
-def create_discrete_cmap(n_color_steps=20):
-    cmap = plt.cm.Spectral  # define the colormap
+def create_discrete_cmap(n_color_steps=20, cmap=plt.cm.Spectral):
     # extract all colors from the .jet map
     cmap_jumps = np.linspace(0,cmap.N,n_color_steps, dtype=int)
     cmaplist = [cmap(i) for i in cmap_jumps]
@@ -409,6 +410,94 @@ def count_sign_changes(arr):
     count = np.count_nonzero(differences)
     
     return count
+
+
+def compute_flux(cv_values, in_state, lambda_i, timestep_fs):
+    """
+    Compute the flux through an interface lambda_i using first forward crossings
+    from stable state defined by lambda_0.
+
+    Parameters:
+    -----------
+    cv_values : array-like
+        Time series of CV values (1D array).
+    lambda_0 : float
+        Value defining the stable state.
+    lambda_i : float
+        Interface value for which to compute flux.
+    timestep_fs : float
+        Time per step in femtoseconds (e.g., 0.002 fs).
+
+    Returns:
+    --------
+    float
+        Flux through the interface in 1/fs (crossings per femtosecond).
+    int
+        Number of first crossings.
+    """
+    first_crossings = find_first_crossings(cv_values, in_state, lambda_i)
+    total_time_fs = len(cv_values) * timestep_fs
+    flux = len(first_crossings) / total_time_fs
+    return flux, len(first_crossings)
+
+
+def find_first_crossings(cv_values, in_state, lambda_i):
+    """
+    Detect first forward crossings through interface lambda_i
+    after returning to the stable state defined by lambda_0.
+
+    Parameters:
+    -----------
+    cv_values : array-like
+        Time series of CV values.
+    lambda_0 : float
+        Value defining the stable state (e.g., basin A).
+        Crossing below this value resets the search.
+    lambda_i : float
+        Interface value for detecting forward crossings.
+
+    Returns:
+    --------
+    list of int
+        Indices (time steps) where first forward crossings occurred.
+    """
+    in_A = in_state
+    above_interface = cv_values > lambda_i
+    crossings = []
+    crossed = False
+
+    for t in range(1, len(cv_values)):
+        if in_A[t]:
+            crossed = False  # reset on return to stable state
+
+        if not in_A[t] and not crossed and not above_interface[t - 1] and above_interface[t]:
+            crossings.append(t)
+            crossed = True  # suppress additional crossings until return to A
+
+    return crossings
+
+def count_forward_crossings(arr):
+    """
+    Count the number of forward crossings through an interface.
+
+    A forward crossing is defined as the collective variable (CV)
+    moving from below the interface to equal or above it.
+
+    Parameters:
+    -----------
+    cv_values : array-like
+        Time series of the CV values (1D array).
+    interface_value : float
+        Value of the interface.
+
+    Returns:
+    --------
+    int
+        Number of forward crossings.
+    """
+    return sum(1 for i in range(1, len(arr))
+               if arr[i - 1] < 0 and arr[i] >= 0)
+
 
 def ceil_decimal(x, decimals=1):
     multiply = 10^decimals
@@ -455,10 +544,7 @@ def check_interfaces(model, stable_states, descriptors, weights=None, shot_resul
         print(f"stable_state {stable_states[state]} data falls in q-range {min_max_stable_q[state]}") 
 
 
-    interface_distance = 0.25
     if np.sum(np.isnan(min_max_stable_q)) == 0 :
-        # Forward_interfaces = np.arange(ceil_decimal(min_max_stable_q[0,1],decimals=2),interface_distance,interface_distance)
-        # Backward_interfaces = np.arange(0,floor_decimal(min_max_stable_q[1,0],decimals=2)+interface_distance,interface_distance)
         Forward_interfaces = interfaces_q_space(ceil_decimal(min_max_stable_q[0,1],decimals=2),overlap,direction="forward")
         Backward_interfaces = interfaces_q_space(floor_decimal(min_max_stable_q[1,0],decimals=2),overlap,direction="backward")
 

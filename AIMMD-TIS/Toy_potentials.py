@@ -603,6 +603,64 @@ class potential_Face(higher_d_harmonic):
         path += part_3
         return path
 
+class potential_MullerBrown(higher_d_harmonic):
+    def __init__(self, n_harmonics=20, seed=123, rotation_degrees=0, d=1, scale=1):
+        rotation = rotation_degrees / 180 * np.pi
+        self.n_harmonics = n_harmonics
+        self.seed = seed
+        self.n_dims_pot = 2
+        pes_list = [FacePotential(rotation=rotation, d=d, scale=scale)]
+        self.create_pes(pes_list)  # Assuming this initializes the potential energy surface
+        self.create_topology()  # Assuming this creates the topology of the system
+        self.cos_rot = np.cos(-rotation) / d
+        self.sin_rot = np.sin(-rotation) / d
+        self.rot = np.array([[self.cos_rot, self.sin_rot], [-self.sin_rot, self.cos_rot]])
+
+        # Define states in the rotated frame
+        state_A_tilde = np.array([1.0, -1.0]) 
+        state_B_tilde = np.array([1.0, 1.0])
+        self.state_A = state_A_tilde @ self.rot.T
+        self.state_B = state_B_tilde @ self.rot.T
+        self.state_boundary = 0.125 
+        self.extent = np.array([-1.5, 1.5, -1.5, 1.5]) 
+        self.levels = np.arange(-2, 16, 1)
+
+    def __repr__(self):
+        return f"FacePotential"
+    
+    def to_dict(self):
+        dct = super().to_dict()  # Assuming this calls the parent class to_dict
+        return dct
+    
+    def V(self, sys):
+        # Compute potential energy for the "Face" potential
+        return self.pes.V(sys)
+    
+    def dVdx(self, sys):
+        """
+        -F = [dV(x, y) / dx, dV(x, y) / dy]
+        """
+        # Compute forces (gradient of the potential)
+        return self.pes.dVdx(sys)
+
+    def stable_interface_function(self, snapshot, center):
+        import math
+        return math.sqrt((snapshot.xyz[0][0]-center[0])**2 + (snapshot.xyz[0][1]-center[1])**2)
+    
+    def simple_initial_path(self, steps, toy_eng):
+        end_1 = [-1,-1]
+        end_2 = [-1,1]
+        part_1 = self.linear_path(self.state_A, end_1, int(1/3*steps), toy_eng)
+        part_2 = self.linear_path(end_1, end_2, int(1/3*steps), toy_eng)
+        part_3 = self.linear_path(end_2, self.state_B, int(1/3*steps), toy_eng)
+        path = []
+        path += part_1
+        path += part_2
+        path += part_3
+        return path
+
+
+
 # simple toys.PES subclasses which are used inside the high-d potentials:
 
 #from the openpathsampling github:
@@ -969,6 +1027,8 @@ class MuellerBrown(toys.PES):
         return self.scale * np.where(V > self.max_u, self.max_u, V)
 
     def dVdx(self, sys):
+        if self._local_dVdx is None:
+            self._local_dVdx = np.zeros_like(sys.positions)
         x, y = sys.positions
         dVdx, dVdy = 0.0, 0.0
         for k in range(0, len(self.a)):
@@ -982,7 +1042,8 @@ class MuellerBrown(toys.PES):
                                        + self.gamma[k] * np.power((y - self.b[k]), 2)) \
                     * (self.beta[k] * (x - self.a[k]) + 2 * self.gamma[k] * (y - self.b[k]))
 
-        self._local_dVdx = np.array([self.scale * dVdx, self.scale * dVdy])
+        self._local_dVdx[0] = self.scale * dVdx
+        self._local_dVdx[1] = self.scale * dVdy
         return self._local_dVdx
 
 
