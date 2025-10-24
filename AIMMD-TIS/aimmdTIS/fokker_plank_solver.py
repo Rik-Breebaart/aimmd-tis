@@ -3,7 +3,7 @@ from tqdm import tqdm
 """ 
 Fokker Plank Solver for the committor in 2D potentials. 
 Provided by Roberto Covino and Gianmarco Lazzeri from Frankfurt Institute of Advanced Studies.
-Using Fokker Plank solver method from: 
+Using Fokker Plank solver method from: https://doi.org/10.1063/1.5118362
 """
 
 # def interpolate(x, y, P, X, Y):

@@ -1,0 +1,19 @@
+name: py39_AIMMD-TIS
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - openmm=8.0.0
+  - openpathsampling
+  - openmmtools
+  - mdtraj
+  - nglview
+  - jupyter
+  - tqdm
+  - pytorch 
+  - h5py>=3
+  - pip
+  - cython
+  - ipykernel
+
