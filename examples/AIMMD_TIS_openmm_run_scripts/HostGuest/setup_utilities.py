@@ -26,7 +26,7 @@ sys.path.append(parent_parent_directory)
 from aimmd import aimmd
 import TIS_AIMMD_toy_framework as TAI
 from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config
-from AIMMD_TIS_openmm_run_scripts.transform_functions import cv_hg_distance
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import cv_hg_distance
 
 
 
@@ -424,6 +424,6 @@ global_arguments = {
     "RPE_name": (["-RPE_name","--RPE_name"],str,False,"RPE storage name, default name is RPE_storage"),
     "number_trajectories": (["-n_traj", "--n_traj"], int, False, "The number of trajectories obtained for each TIS run."),
     "n_thermalization": (["-n_therm", "--n_therm"], int, False, "The number of trajectories removed as thermalization.", 200),
-    "cutoff": (["-cutoff", "--cutoff"], float, False, "The WHAM cutoff used.", 0.01),
+    "cutoff": (["-cutoff", "--cutoff"], float, False, "The WHAM cutoff used.", 0.01, "+"),
     "max_min_filename": (["-max_min", "--max_min"], str, False, "filename for the max_min stored path (should be first part of the name e.g. 'max_min_q_int')")
 }

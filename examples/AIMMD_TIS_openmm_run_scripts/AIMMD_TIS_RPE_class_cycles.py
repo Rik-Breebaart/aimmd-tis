@@ -12,7 +12,7 @@ from time import sleep
 from functools import reduce
 from copy import deepcopy
 # current_directory = os.path.dirname(os.path.abspath(os.getcwd()))
-current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System"
+current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System-NPT"
 # Get the current directory and add it to the system path
 sys.path.append(current_directory)
 
@@ -26,8 +26,8 @@ sys.path.append(parent_parent_directory)
 from aimmd import aimmd
 import TIS_AIMMD_toy_framework as TAI
 from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config, save_fig_pdf_and_png
-from AIMMD_TIS_openmm_run_scripts.setup_utilities import TPS_setup, AIMMD_setup, TIS_setup, create_parser, global_arguments
-from AIMMD_TIS_openmm_run_scripts.transform_functions import descriptor_transform_HG_simple_symmetriced as descriptor_transform
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.setup_utilities import TPS_setup, AIMMD_setup, TIS_setup, create_parser, global_arguments
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import descriptor_transform_HG_simple_symmetriced as descriptor_transform
 
 from openpathsampling.experimental.storage import monkey_patch_all
 from openpathsampling.experimental.storage.collective_variables import MDTrajFunctionCV
@@ -36,6 +36,9 @@ from simtk import unit
 import openpathsampling.engines.openmm as ops_openmm
 paths = monkey_patch_all(paths)
 
+#### here TODO temporary load of crprw class
+from TIS_AIMMD_toy_framework.TIS_Analysis_v2 import Crossing_Probability_and_weights
+
 orig_settings = np.seterr(all='ignore') 
 
 class TIS_analysis():
@@ -43,13 +46,22 @@ class TIS_analysis():
                  ops_storage_path=None, RPE_storage_path=None, stable_storage_path=None, system_resource_directory=None,
                  RPE_already_stored=False, n_thermalization=200, cutoff=0.01, storage_path_list_forward=None, 
                  storage_path_list_backward=None, max_min_filename=None, load_forward=True, load_backward=True):
-        
+
         self.input_path = input_path
         self.output_path = output_path
         self.RPE_storage_path = RPE_storage_path
         self.stable_storage_path = stable_storage_path
         self.set_plot_settings()
 
+        if isinstance(cutoff, (float, int)):
+            forward_cutoff = backward_cutoff = float(cutoff)
+        elif isinstance(cutoff, (list, tuple)):
+            if len(cutoff) != 2:
+                raise ValueError(f"If cutoff is a list or tuple, it must contain exactly two values (got {len(cutoff)}).")
+            forward_cutoff, backward_cutoff = map(float, cutoff)
+        else:
+            raise TypeError(f"cutoff must be a float or a list/tuple of two floats (got {type(cutoff)}).")
+        
         # Load config files
         TPS_config_path = Path(input_path / TPS_config_path).with_suffix(".json")
         TIS_config_path = Path(input_path / TIS_config_path).with_suffix(".json")
@@ -74,7 +86,7 @@ class TIS_analysis():
         self.training_model = None
         self.q_bins_WHAM = self.set_q_bins_WHAM()
 
-        self.CrPrW_forward = TAI.Crossing_Probability_and_weights(
+        self.CrPrW_forward = Crossing_Probability_and_weights(
             self.interface_values_forward, "forward", 
             storage_folder=input_path, 
             storage_filename=None if storage_list_forward else ops_storage_path, 
@@ -86,12 +98,12 @@ class TIS_analysis():
         fig, ax = plt.subplots(figsize=(20,10))
         ax.set_title("TIS crossing probabilities forward")
         cros_prob_forward, wham_weights_forward, path_weights_forward = self.CrPrW_forward.Compute_crossing_prob_and_wham_path_weights(
-            self.q_bins_WHAM, max_min_filename=max_min_filename, n_thermalization=n_thermalization, cutoff=cutoff, ax=ax
+            self.q_bins_WHAM, max_min_filename=max_min_filename, n_thermalization=n_thermalization, cutoff=forward_cutoff, ax=ax
         )
         save_fig_pdf_and_png(fig, "crossing_per_interface_forward", output_path=self.output_path)
         self.plot_crossing_probabilities(cros_prob_forward=cros_prob_forward)
 
-        self.CrPrW_backward = TAI.Crossing_Probability_and_weights(
+        self.CrPrW_backward = Crossing_Probability_and_weights(
             self.interface_values_backward, "backward", 
             storage_folder= input_path, 
             storage_filename=None if storage_list_backward else ops_storage_path, 
@@ -103,7 +115,7 @@ class TIS_analysis():
         fig, ax = plt.subplots(figsize=(20,10))
         ax.set_title("TIS crossing probabilities backward")
         cros_prob_backward, wham_weights_backward, path_weights_backward = self.CrPrW_backward.Compute_crossing_prob_and_wham_path_weights(
-            self.q_bins_WHAM, max_min_filename=max_min_filename, n_thermalization=n_thermalization, cutoff=cutoff, ax=ax
+            self.q_bins_WHAM, max_min_filename=max_min_filename, n_thermalization=n_thermalization, cutoff=backward_cutoff, ax=ax
         )
         save_fig_pdf_and_png(fig, "crossing_per_interface_backward", output_path=output_path)
         self.plot_crossing_probabilities(cros_prob_backward=cros_prob_backward)

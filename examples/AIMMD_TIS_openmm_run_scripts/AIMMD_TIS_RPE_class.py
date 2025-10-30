@@ -12,7 +12,7 @@ from time import sleep
 from functools import reduce
 from copy import deepcopy
 # current_directory = os.path.dirname(os.path.abspath(os.getcwd()))
-current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System"
+current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System-NPT"
 # Get the current directory and add it to the system path
 sys.path.append(current_directory)
 
@@ -26,8 +26,8 @@ sys.path.append(parent_parent_directory)
 from aimmd import aimmd
 import TIS_AIMMD_toy_framework as TAI
 from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config, save_fig_pdf_and_png
-from AIMMD_TIS_openmm_run_scripts.setup_utilities import TPS_setup, AIMMD_setup, TIS_setup, create_parser, global_arguments
-from AIMMD_TIS_openmm_run_scripts.transform_functions import descriptor_transform_HG_simple_symmetriced as descriptor_transform
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.setup_utilities import TPS_setup, AIMMD_setup, TIS_setup, create_parser, global_arguments
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import descriptor_transform_HG_simple_symmetriced as descriptor_transform
 
 from openpathsampling.experimental.storage import monkey_patch_all
 from openpathsampling.experimental.storage.collective_variables import MDTrajFunctionCV

@@ -20,7 +20,7 @@ paths = monkey_patch_all(paths)
 
 # Add necessary directories to sys.path
 # current_directory = os.path.dirname(os.path.abspath(os.getcwd()))
-current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System"
+current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System-NPT"
 
 sys.path.append(current_directory)
 parent_directory = os.path.abspath(os.path.join(current_directory, os.pardir))
@@ -32,9 +32,9 @@ sys.path.append(parent_parent_directory)
 from aimmd import aimmd
 import TIS_AIMMD_toy_framework as TAI
 from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config
-from AIMMD_TIS_openmm_run_scripts.setup_utilities import TPS_setup, AIMMD_setup, create_parser, global_arguments
-from AIMMD_TIS_openmm_run_scripts.transform_functions import cv_hg_distance
-from AIMMD_TIS_openmm_run_scripts.transform_functions import descriptor_transform_HG_simple as descriptor_transform
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.setup_utilities import TPS_setup, AIMMD_setup, create_parser, global_arguments
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import cv_hg_distance
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import descriptor_transform_HG_new_symmetric_scaled as descriptor_transform
 
 
 # Define the main function to run AIMMD TPS
@@ -140,7 +140,19 @@ def run_AIMMD_TPS(input_path: Path = None, config_path=None, n_steps=None, traj_
     sampler.attach_hook(densityhook)
 
     # Run the sampler
+    """
+    psuedo code example of saving descriptors while running
+        n_part = 5
+    for i in range(n_steps/n_part):
+        sampler.run(n_part)
+        #save descriptors for last n_part steps
+        for step in range(storage.steps[-n_part:]):
+            array[step_index] = descriptor_transform(traj_step)
+    
+    """
     sampler.run(n_steps)
+
+
     
     # Store the final trajectory in a separate file
     if save_final_traj:

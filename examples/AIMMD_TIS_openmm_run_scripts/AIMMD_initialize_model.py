@@ -18,22 +18,12 @@ from openpathsampling.experimental.storage import Storage
 # Monkey patch OpenPathSampling to use experimental features
 paths = monkey_patch_all(paths)
 
-# Add necessary directories to sys.path
-# current_directory = os.path.dirname(os.path.abspath(os.getcwd()))
-current_directory = "/home/rbreeba/Projects/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/Host-Guest-System"
-
-sys.path.append(current_directory)
-parent_directory = os.path.abspath(os.path.join(current_directory, os.pardir))
-parent_parent_directory = os.path.abspath(os.path.join(parent_directory, os.pardir))
-sys.path.append(parent_directory)
-sys.path.append(parent_parent_directory)
-
 # Custom imports
-from aimmd import aimmd
-import TIS_AIMMD_toy_framework as TAI
-from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config
-from AIMMD_TIS_openmm_run_scripts.setup_utilities import TPS_setup, AIMMD_setup, create_parser, global_arguments
-from AIMMD_TIS_openmm_run_scripts.transform_functions import descriptor_transform_HG_simple as descriptor_transform
+import aimmd
+import aimmdTIS
+
+from .HostGuest.setup_utilities import TPS_setup, AIMMD_setup, create_parser, global_arguments
+from .HostGuest.transform_functions import descriptor_transform_HG_continuous_waters_7_descriptors_symmetriced_or_scaled as descriptor_transform
 
 
 def run_initialize_model(in_path: Path=None, config_path=None, aimmd_store_path=None, output_path=None, system_resource_path=None):

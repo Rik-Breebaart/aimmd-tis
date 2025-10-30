@@ -27,8 +27,7 @@ from aimmd import aimmd
 import TIS_AIMMD_toy_framework as TAI
 from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config, save_fig_pdf_and_png
 from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.setup_utilities import TPS_setup, AIMMD_setup, TIS_setup, create_parser, global_arguments
-from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import descriptor_transform_HG_new_symmetric_continuous_waters_scaled as descriptor_transform
-
+from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import descriptor_transform_HG_continuous_waters_7_descriptors_scaled as descriptor_transform
 
 from openpathsampling.experimental.storage import monkey_patch_all
 from openpathsampling.experimental.storage.collective_variables import MDTrajFunctionCV

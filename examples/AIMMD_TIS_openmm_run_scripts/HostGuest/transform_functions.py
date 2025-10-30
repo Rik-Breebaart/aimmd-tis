@@ -1,40 +1,3 @@
-# import numpy as np
-# from openmm import app
-# import openmm as mm
-# from openmmtools.integrators import VVVRIntegrator
-# from simtk import unit
-# import openpathsampling as paths
-# import openpathsampling.engines.openmm as eng
-# from collections import namedtuple
-# import numpy as np 
-# import matplotlib.pyplot as plt
-# import openpathsampling as paths
-# import torch
-# import sys
-# import os
-# from functools import reduce
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from copy import deepcopy
-# import argparse
-# from pathlib import Path
-
-# current_directory = os.path.dirname(os.path.abspath(os.getcwd()))
-# # Add the current directory to sys.path
-# sys.path.append(current_directory)
-
-# # Get the parent directory
-# parent_directory = os.path.abspath(os.path.join(current_directory, os.pardir))
-# parent_parent_directory = os.path.abspath(os.path.join(parent_directory, os.pardir))
-# # Add the parent directory to sys.path
-# sys.path.append(parent_directory)
-# sys.path.append(parent_parent_directory)
-
-# Custom imports
-from aimmd import aimmd
-import TIS_AIMMD_toy_framework as TAI
-from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config
-
 import numpy as np
 from openmm import app
 import openmm as mm
@@ -44,7 +7,7 @@ import openpathsampling as paths
 import openpathsampling.engines.openmm as eng
 from collections import namedtuple
 import mdtraj as md 
-mdtraj_host_guest = md.load("/Users/rbreeba/Documents/PhD/-RE-TIS-AIMMD/AIMMD_TIS_openmm_run_scripts/HostGuest.pdb")
+mdtraj_host_guest = md.load("/Users/rbreeba/Documents/PhD/-RE-TIS-AIMMD/TIS_AIMMD_biosystems/AIMMD_TIS_openmm_run_scripts/HostGuest.pdb")
 mdtraj_topology = mdtraj_host_guest.topology
 
 guest_head_indices = np.array(mdtraj_topology.select("name C9 H15"))
@@ -70,7 +33,8 @@ indexGroup_3_Host = np.array(mdtraj_topology.select("resname CUC and name N13 N1
 
 # only take the O to count a full water residue
 water_indices = np.array(mdtraj_topology.select("water and type O"))
-
+# take all atoms of the water molecules to count a water and count by deviding by 3 (smoother variable)
+water_indices_all_atoms = np.array(mdtraj_topology.select("water and type O"))
 
 def group_CM_vector(snapshot, group_A_atoms, group_B_atoms):
     import numpy as np
@@ -197,9 +161,19 @@ cv_angle_guest_orientation = paths.CoordinateFunctionCV(
     # cv_scalarize_numpy_singletons=False,  # to make sure it always returns a 2d array, even if called on trajectories with a single frame
 ).with_diskcache()
 
+def host_guest_angle_guest_orientation_symmetriced(snapshot,cv_angle_guest_orientation):
+    import numpy as np
+    theta = cv_angle_guest_orientation (snapshot)
+    return np.min([theta, np.pi-theta])    
+
+cv_hg_angle_guest_orientation_symmetric =  paths.CoordinateFunctionCV(
+    name="angle_guest_orientation",
+    f=host_guest_angle_guest_orientation_symmetriced,
+    cv_angle_guest_orientation=cv_angle_guest_orientation
+).with_diskcache()
+
 
 def count_waters_in_cavity(snapshot, host_indices, water_indices, cavity_cutoff=0.4):
-    # Precompute constants
     import numpy as np
     host_com = np.mean(snapshot.xyz[host_indices], axis=0)  # Center of mass of the host
     box_lengths = snapshot.box_vectors.diagonal()  # Box lengths for periodic boundary conditions
@@ -227,6 +201,7 @@ cv_water_cavity = paths.FunctionCV(
     water_indices=water_indices,
     cavity_cutoff=0.4
 ).with_diskcache()
+
 
 # Define the hydrogen bond counting function
 def count_hydrogen_bonds(snapshot,host_indices,guest_indices):
@@ -885,6 +860,230 @@ descriptor_transform_HG_new_symmetric_scaled= paths.FunctionCV(
     descriptor_transform = descriptor_transform_HG_new_symmetric,
     descriptor_min= descriptor_new_min,
     descriptor_max= descriptor_new_max,
+    cv_wrap_numpy_array=True,
+    cv_scalarize_numpy_singletons=False
+).with_diskcache()
+
+
+### Smoothned descriptor functions 
+def count_waters_in_cavity_continuous(snapshot, host_indices, water_indices, cavity_cutoff=0.4):
+    import numpy as np
+    host_com = np.mean(snapshot.xyz[host_indices], axis=0)  # Center of mass of the host
+    box_lengths = snapshot.box_vectors.diagonal()  # Box lengths for periodic boundary conditions
+
+    # Get water positions
+    water_positions = snapshot.xyz[water_indices]
+
+    # Calculate displacements using minimum image convention
+    displacements = water_positions - host_com
+    displacements -= box_lengths * np.round(displacements / box_lengths)
+
+    # Compute distances
+    distances = np.linalg.norm(displacements, axis=1)
+
+    # Count waters within the cavity cutoff
+    continuous_water_metric = 1/(1+np.exp(30*(distances-cavity_cutoff)))
+    water_in_cavity_count = np.sum(continuous_water_metric)
+
+    return water_in_cavity_count  # Ensure the return is an integer
+
+# Create the CV in OpenPathSampling
+cv_water_cavity_continuous = paths.FunctionCV(
+    name="water_in_cavity",
+    f=count_waters_in_cavity_continuous,
+    host_indices=host_indices,
+    water_indices=water_indices,
+    cavity_cutoff=0.5
+).with_diskcache()
+
+
+def water_near_guest_region_continuous(snapshot, region_indices, water_indices, cutoff=0.6):
+    import numpy as np
+
+    # Get region center (e.g., COM of guest head/tail)
+    region_com = np.mean(snapshot.xyz[region_indices], axis=0)  # shape: (3,)
+    water_positions = snapshot.xyz[water_indices]  # shape: (N, 3)
+
+    # Get box lengths from diagonal of box_vectors (assumes square box)
+    box_lengths = np.diagonal(snapshot.box_vectors)  # shape: (3,)
+
+    # Apply minimum image convention to all displacements
+    displacement = water_positions - region_com  # shape: (N, 3)
+    displacement -= box_lengths * np.round(displacement / box_lengths)
+
+    distances = np.linalg.norm(displacement, axis=1)
+
+    continuous_water_metric = 1/(1+np.exp(30*(distances-cutoff)))
+    water_near_region = np.sum(continuous_water_metric)
+    return water_near_region
+
+cutoff_waters_guest = 0.35
+cv_water_guest_top_continuous = paths.FunctionCV(
+    name="water_near_guest_top",
+    f=water_near_guest_region_continuous,
+    region_indices=guest_head_indices,
+    water_indices=water_indices,
+    cutoff=cutoff_waters_guest
+).with_diskcache()
+
+cv_water_guest_center_continuous = paths.FunctionCV(
+    name="water_near_guest_center",
+    f=water_near_guest_region_continuous,
+    region_indices=guest_center_indices,
+    water_indices=water_indices,
+    cutoff=cutoff_waters_guest
+).with_diskcache()
+
+cv_water_guest_bottom_continuous = paths.FunctionCV(
+    name="water_near_guest_bottom",
+    f=water_near_guest_region_continuous,
+    region_indices=guest_tail_indices,
+    water_indices=water_indices,
+    cutoff=cutoff_waters_guest
+).with_diskcache()
+
+
+
+def shared_waters_between_host_guest_continuous(snapshot, host_indices, guest_indices, water_indices, cutoff=0.5):
+    import numpy as np
+
+    box_lengths = np.diagonal(snapshot.box_vectors)
+
+    # Compute COMs of host and guest
+    host_com = np.mean(snapshot.xyz[host_indices], axis=0)
+    guest_com = np.mean(snapshot.xyz[guest_indices], axis=0)
+
+    water_positions = snapshot.xyz[water_indices]
+
+    # Minimum image convention: distance between water and COMs
+    def pbc_distance(water_pos, com):
+        delta = water_pos - com
+        delta -= box_lengths * np.round(delta / box_lengths)
+        return np.linalg.norm(delta, axis=1)
+
+    d_host = pbc_distance(water_positions, host_com)
+    d_guest = pbc_distance(water_positions, guest_com)
+    shared = 1/(1+np.exp(30*(d_host-cutoff))*(1+np.exp(30*(d_guest-cutoff))))
+    return np.sum(shared)
+
+
+cv_water_shared_host_guest_continuous = paths.FunctionCV(
+    name="water_shared_host_guest",
+    f=shared_waters_between_host_guest_continuous,
+    host_indices=host_indices,
+    guest_indices=guest_indices,
+    water_indices=water_indices,
+    cutoff=0.5  
+).with_diskcache()
+
+
+
+descriptor_transform_HG_new_symmetric_continuous_waters = paths.FunctionCV(
+    name='descriptor_transform_scaled',
+    f=transform_function_HG_additional_CVs_symmetric,
+    cv_hg_distance=cv_hg_distance,
+    cv_guest_angle_orientation=cv_angle_guest_orientation,
+    cv_host_guest_angle=cv_hg_position_angle_symmetric,
+    cv_hydrogen_bond=cv_hydrogen_bond,
+    cv_water_cavity=cv_water_cavity_continuous,
+    cv_hydrophobic_contact_score=cv_hydrophobic_contact_score,
+    cv_guest_OH_dihedral_top=cv_guest_OH_dihedral_top,
+    cv_guest_OH_dihedral_bottom=cv_guest_OH_dihedral_bottom,
+    cv_water_near_guest_top=cv_water_guest_top_continuous,
+    cv_water_near_guest_center=cv_water_guest_center_continuous,
+    cv_water_near_guest_bottom=cv_water_guest_bottom_continuous,
+    cv_water_shared_host_guest=cv_water_shared_host_guest_continuous,
+    cv_host_mouth_deformation=cv_mouth_deformation,
+    cv_hbond_asymmetry=cv_hbond_asymmetry,
+    cv_wrap_numpy_array=True,
+    cv_scalarize_numpy_singletons=False
+).with_diskcache()
+
+descriptor_transform_HG_new_symmetric_continuous_waters_scaled= paths.FunctionCV(
+    name='descriptor_transform_scaled',
+    f=scale_descriptors,
+    descriptor_transform = descriptor_transform_HG_new_symmetric_continuous_waters,
+    descriptor_min= descriptor_new_min,
+    descriptor_max= descriptor_new_max,
+    cv_wrap_numpy_array=True,
+    cv_scalarize_numpy_singletons=False
+).with_diskcache()
+
+
+
+descriptors_index_7_set_from_14= [0,1,2,3,4,5,11]
+descriptors_7_set_min = np.array(descriptor_new_min)[descriptors_index_7_set_from_14]
+descriptors_7_set_max = np.array(descriptor_new_max)[descriptors_index_7_set_from_14]
+
+
+def transform_function_HG_7_descriptors(
+    snapshot,
+    cv_hg_distance,
+    cv_guest_angle_orientation,
+    cv_host_guest_angle,
+    cv_hydrogen_bond,
+    cv_water_cavity,
+    cv_hydrophobic_contact_score,
+    cv_water_shared_host_guest,
+):
+    import numpy as np
+
+    values = np.array([
+        cv_hg_distance(snapshot),
+        cv_guest_angle_orientation(snapshot),
+        cv_host_guest_angle(snapshot),
+        cv_hydrogen_bond(snapshot),
+        cv_water_cavity(snapshot),
+        cv_hydrophobic_contact_score(snapshot),
+        cv_water_shared_host_guest(snapshot),
+    ], dtype=float)
+
+    return values
+
+descriptor_transform_HG_continuous_waters_7_descriptors = paths.FunctionCV(
+    name='descriptor_transform_scaled',
+    f=transform_function_HG_7_descriptors,
+    cv_hg_distance=cv_hg_distance,
+    cv_guest_angle_orientation=cv_angle_guest_orientation,
+    cv_host_guest_angle=cv_hg_position_angle_symmetric,
+    cv_hydrogen_bond=cv_hydrogen_bond,
+    cv_water_cavity=cv_water_cavity_continuous,
+    cv_hydrophobic_contact_score=cv_hydrophobic_contact_score,
+    cv_water_shared_host_guest=cv_water_shared_host_guest_continuous,
+    cv_wrap_numpy_array=True,
+    cv_scalarize_numpy_singletons=False
+).with_diskcache()
+
+descriptor_transform_HG_continuous_waters_7_descriptors_scaled= paths.FunctionCV(
+    name='descriptor_transform_scaled',
+    f=scale_descriptors,
+    descriptor_transform = descriptor_transform_HG_continuous_waters_7_descriptors,
+    descriptor_min= descriptors_7_set_min,
+    descriptor_max= descriptors_7_set_max,
+    cv_wrap_numpy_array=True,
+    cv_scalarize_numpy_singletons=False
+).with_diskcache()
+
+descriptor_transform_HG_continuous_waters_7_descriptors_symmetriced_or = paths.FunctionCV(
+    name='descriptor_transform_scaled',
+    f=transform_function_HG_7_descriptors,
+    cv_hg_distance=cv_hg_distance,
+    cv_guest_angle_orientation=cv_hg_angle_guest_orientation_symmetric,
+    cv_host_guest_angle=cv_hg_position_angle_symmetric,
+    cv_hydrogen_bond=cv_hydrogen_bond,
+    cv_water_cavity=cv_water_cavity_continuous,
+    cv_hydrophobic_contact_score=cv_hydrophobic_contact_score,
+    cv_water_shared_host_guest=cv_water_shared_host_guest_continuous,
+    cv_wrap_numpy_array=True,
+    cv_scalarize_numpy_singletons=False
+).with_diskcache()
+
+descriptor_transform_HG_continuous_waters_7_descriptors_symmetriced_or_scaled= paths.FunctionCV(
+    name='descriptor_transform_scaled',
+    f=scale_descriptors,
+    descriptor_transform = descriptor_transform_HG_continuous_waters_7_descriptors_symmetriced_or,
+    descriptor_min= descriptors_7_set_min,
+    descriptor_max= descriptors_7_set_max,
     cv_wrap_numpy_array=True,
     cv_scalarize_numpy_singletons=False
 ).with_diskcache()
