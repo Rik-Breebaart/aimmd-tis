@@ -1,0 +1,41 @@
+name: aimmd-tis
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python
+  - python=3.11
+  - pip
+  
+  # Scientific computing
+  - numpy
+  - scipy
+  - matplotlib
+  
+  # Machine learning
+  - pytorch
+
+  # Molecular dynamics and path sampling
+  - openpathsampling
+  
+  # OpenMM and tools
+  - openmm
+  - openmmtools
+  - mdtraj
+  
+  # Utilities
+  - pyyaml
+  - networkx
+  - h5py
+  - cython
+  
+  # Development tools
+  - jupyter
+  - ipython
+  - pytest
+  - pytest-cov
+  
+  # Code quality
+  - black
+  - flake8
+  - mypy
