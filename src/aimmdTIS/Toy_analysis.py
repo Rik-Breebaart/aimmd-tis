@@ -4,9 +4,15 @@ import json
 import matplotlib.pyplot as plt
 import matplotlib
 import openpathsampling as paths
-from .Tools import create_discrete_cmap
-from .Toy_potentials import CallableVolume
-from .Training import snapshot_loss_original, snapshot_lnP, snapshot_loss_normalized_q, snapshot_loss_low_q_scaled, snapshot_loss_sqrt_rho_weight, snapshot_loss_smoothness
+from .Tools import create_discrete_cmap, CallableVolume
+from .training import (
+    snapshot_loss_original,
+    snapshot_lnP,
+    snapshot_loss_normalized_q,
+    snapshot_loss_low_q_scaled,
+    snapshot_loss_sqrt_rho_weight,
+    snapshot_loss_smoothness,
+)
 
 class ToyAimmdVisualizer:
     def __init__(self, temperature=1, resolution=501, descriptor_dims=[0,1], total_num_descriptors = None, dims_extent = None, pes=None, toy=True, standard_value=None):
