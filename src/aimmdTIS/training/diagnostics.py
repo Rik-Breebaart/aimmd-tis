@@ -115,7 +115,7 @@ def summarize_training(results):
     }
 
 
-def plot_training_diagnostics(results_or_path, stage_name="training", save_path=None, show=True):
+def plot_training_diagnostics(results_or_path, stage_name="training", save_path=None, show=True, smoothness_weight=0.0, l1_weight=0.0):
     """Create a clear 2x2 diagnostics figure from training results."""
     results = load_training_results(results_or_path)
 
@@ -156,14 +156,14 @@ def plot_training_diagnostics(results_or_path, stage_name="training", save_path=
         ax.plot(np.arange(1, train_model.size + 1), train_model, label="Train model", lw=1.8)
     if test_model.size:
         ax.plot(np.arange(1, test_model.size + 1), test_model, label="Test model", lw=1.8)
-    if train_smooth.size:
-        ax.plot(np.arange(1, train_smooth.size + 1), train_smooth, label="Train smooth", lw=1.4)
-    if test_smooth.size:
-        ax.plot(np.arange(1, test_smooth.size + 1), test_smooth, label="Test smooth", lw=1.4)
-    if train_l1.size:
-        ax.plot(np.arange(1, train_l1.size + 1), train_l1, label="Train L1", lw=1.2)
-    if test_l1.size:
-        ax.plot(np.arange(1, test_l1.size + 1), test_l1, label="Test L1", lw=1.2)
+    if train_smooth.size and smoothness_weight > 0.0:
+        ax.plot(np.arange(1, train_smooth.size + 1), train_smooth*smoothness_weight, label="Train smooth", lw=1.4)
+    if test_smooth.size and smoothness_weight > 0.0:
+        ax.plot(np.arange(1, test_smooth.size + 1), test_smooth*smoothness_weight, label="Test smooth", lw=1.4)
+    if train_l1.size and l1_weight > 0.0:
+        ax.plot(np.arange(1, train_l1.size + 1), train_l1*l1_weight, label="Train L1", lw=1.2)
+    if test_l1.size and l1_weight > 0.0:
+        ax.plot(np.arange(1, test_l1.size + 1), test_l1*l1_weight, label="Test L1", lw=1.2)
     ax.set_title("Loss Components")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Component value")

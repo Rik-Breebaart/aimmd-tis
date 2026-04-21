@@ -20,7 +20,7 @@ def create_train_test_split(descriptors,  shot_results, weights=None, split=[4, 
     if seed is not None:
         np.random.seed(seed)
     shuffle_rng_index = np.random.permutation(total_dataset_size)
-    if weights == None:
+    if weights is None:
         weights = np.ones(len(shot_results))
     weights_train, weights_test = train_test_split(weights, train_size, test_size, shuffle_rng_index)
     descriptors_train, descriptors_test = train_test_split(

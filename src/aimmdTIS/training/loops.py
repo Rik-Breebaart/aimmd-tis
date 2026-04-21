@@ -161,6 +161,7 @@ def train_one_stage(
             model.nnet.state_dict(),
             meta={"stage": stage_name, "epoch": epoch, "lr": float(lr_log[-1])},
         )
+        aimmd_store.rcmodels[f"{stage_name}_model_most_recent"] = model
 
         current_val = float(test_losses["total_loss"])
         if best_loss is None or current_val < best_loss:
@@ -171,6 +172,8 @@ def train_one_stage(
                 best_state,
                 meta={"epoch": epoch, "val_loss": best_loss},
             )
+            aimmd_store.rcmodels[f"{stage_name}_model_best"] = model
+
         else:
             no_improve += 1
 
@@ -184,6 +187,8 @@ def train_one_stage(
         model.nnet.load_state_dict(best_state)
         for param in model.nnet.parameters():
             param.grad = None
+        aimmd_store.rcmodels[f"most_recent"] = model
+
 
     return {
         "train_total": train_total,

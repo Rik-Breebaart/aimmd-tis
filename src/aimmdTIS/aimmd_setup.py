@@ -189,6 +189,7 @@ class AIMMDSetup:
             rcmodel_old = aimmd_store_old.rcmodels["most_recent"]
             try:
                 trainset = deepcopy(aimmd_store_old.load_trainset())
+                print(f"Loaded trainset with {len(trainset.weights)} samples from {load_model_path}")
             except Exception:
                 trainset = None
             finally:
