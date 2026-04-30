@@ -1,0 +1,43 @@
+{
+    "_comment": "AIMMD model configuration for toy example.",
+    "system_name": "toy_example", 
+    "settings": {},
+    "AIMMD_settings": {
+    "distribution": "lorentzian",
+    "scale": 1.0,
+    "activation": "SiLU",
+    "use_GPU": true,
+    "ee_params": {
+      "lr_0": 0.001,
+      "lr_min": 1e-7,
+      "epochs_per_train": 5,
+      "interval": 5,
+      "window": 75,
+      "cut_off": 30,
+      "cut_off_scaling": 0.999,
+      "max_clipping_norm":1.0,
+      "smoothness_penalty_weight":1e-3,
+      "l1_regularization":0.0
+    },
+    "layers": {
+      "0": 64,
+      "1": 32
+    },
+    "dropout": {
+      "0": 0.1,
+      "1": 0.05
+    }
+    },
+  "training": {
+    "_comment": "aimmd-tps pretraining on parallel simulations (does not apply to toy_example)",
+    "batch_size": 32,
+    "epochs": 2000,
+    "base_lr": 1e-5,
+    "plateau_patience": 30,
+    "plateau_factor": 0.5,
+    "min_lr": 1e-7,
+    "warmup_epochs": 0,
+    "early_stop_patience": 500
+  }
+}
+

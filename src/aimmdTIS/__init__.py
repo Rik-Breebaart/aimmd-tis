@@ -17,6 +17,13 @@ from .training import (
     snapshot_lnP,
     snapshot_loss_low_q_scaled,
 )
+from .visualization import (
+    ToyVisualizer
+)
+from .diagnostics import (
+    check_interfaces,
+    check_interfaces_from_stable_storage,
+)
 
 pretraining_train_function = train_one_stage
 combined_train_function = train_one_stage

@@ -225,6 +225,8 @@ class BaseVisualizer:
     ) -> plt.Axes:
         """Plot q(x) contour lines for a model."""
         q, X, Y = self.compute_q_model_2d(model)
+        if levels is not None:
+            levels = np.sort(np.array(levels))
         if ax is None:
             _, ax = plt.subplots(1, 1)
         contour = ax.contour(X, Y, q, levels=levels, **kwargs)

@@ -13,7 +13,7 @@ import openpathsampling as paths
 
 from .base import BaseVisualizer
 from ..Tools import create_discrete_cmap
-from ..Toy_potentials import CallableVolume
+from ..Tools import CallableVolume
 
 
 class ToyVisualizer(BaseVisualizer):

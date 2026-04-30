@@ -8,6 +8,13 @@ __pycache__/
 *.pyd
 *.dylib
 
+# tutorial specific data files
+*.csv
+*.nc
+*.npy
+*.npz
+*.h5
+
 # Distribution / packaging
 .Python
 build/

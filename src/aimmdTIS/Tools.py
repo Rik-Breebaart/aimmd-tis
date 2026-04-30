@@ -8,7 +8,9 @@ Determining from a stbale state run what the q-values inside the state are such 
 import numpy as np 
 import json
 import matplotlib.pyplot as plt
+import openpathsampling.engines.toy as toys
 from pathlib import Path
+from .diagnostics.interface_placement import check_interfaces as diagnostics_check_interfaces
 from .training import (
     train_one_stage,
     _apply_stage_hparams,
@@ -189,37 +191,15 @@ def interfaces_q_space(q_0,overlap, direction="forward"):
 
 
 def check_interfaces(model, stable_states, descriptors, weights=None, shot_results=None,in_state=None, overlap=0.2):
-    q_total = model.log_prob(descriptors,use_transform=False,batch_size=None)
-
-    min_max_stable_q = np.zeros((len(stable_states),2))
-    # Define `in_state` as a mask array if not provided
-    in_state_arg = False
-    if in_state is None:
-        in_state = np.zeros_like(shot_results)
-        in_state_arg = True
-    # Calculate min and max values for each stable state based on `in_state`
-    for state in range(len(stable_states)):
-        if in_state_arg:
-            if weights is not None and shot_results is not None:
-                in_state[:,state] = (weights * shot_results[:,state]) > 0
-            else:
-                raise ValueError("Provide `in_state` or both `weights` and `shot_results` to calculate it.")
-            
-        state_mask = in_state[:, state].astype(bool)
-        min_max_stable_q[state, 0] = np.min(q_total[state_mask])
-        min_max_stable_q[state, 1] = np.max(q_total[state_mask])
-        
-        print(f"stable_state {stable_states[state]} data falls in q-range {min_max_stable_q[state]}") 
-
-
-    if np.sum(np.isnan(min_max_stable_q)) == 0 :
-        Forward_interfaces = interfaces_q_space(ceil_decimal(min_max_stable_q[0,1],decimals=2),overlap,direction="forward")
-        Backward_interfaces = interfaces_q_space(floor_decimal(min_max_stable_q[1,0],decimals=2),overlap,direction="backward")
-
-        print("Forward interfaces: {}".format(' '.join(map(str, Forward_interfaces.flatten()))))
-        print("Backward interfaces: {}".format(' '.join(map(str, Backward_interfaces.flatten()))))
-        return Forward_interfaces, Backward_interfaces
-    return None,None
+    return diagnostics_check_interfaces(
+        model=model,
+        stable_states=stable_states,
+        descriptors=descriptors,
+        weights=weights,
+        shot_results=shot_results,
+        in_state=in_state,
+        overlap=overlap,
+    )
 
 def model_to(model,mode="cuda"):
     model.nnet = model.nnet.to(mode)
