@@ -268,7 +268,11 @@ class AIMMD_TIS:
                        cvs_dict=None,
                        n_thermalize=0,
                        origin_label=None,
-                       iteration=None):
+                       iteration=None,
+                       descriptor_storage_path=None,
+                       descriptor_set_name=None,
+                       descriptor_name="descriptors",
+                       descriptor_flush_every=1):
         
         if directory is not None:
             self.directory = Path(directory)
@@ -302,6 +306,10 @@ class AIMMD_TIS:
                     n_thermalize=n_thermalize,
                     origin_label=origin_label,
                     iteration=iteration,
+                    descriptor_storage_path=descriptor_storage_path,
+                    descriptor_set_name=descriptor_set_name,
+                    descriptor_name=descriptor_name,
+                    descriptor_flush_every=descriptor_flush_every,
                 )
                 run_summary["storage_path"] = str(storage_path)
                 run_summaries.append(run_summary)
@@ -329,7 +337,11 @@ class AIMMD_TIS:
                        cvs_dict=None,
                        n_thermalize=0,
                        origin_label=None,
-                       iteration=None):
+                       iteration=None,
+                       descriptor_storage_path=None,
+                       descriptor_set_name=None,
+                       descriptor_name="descriptors",
+                       descriptor_flush_every=1):
         return self.run_TIS(
             n_mc_steps=n_mc_steps,
             storage=storage,
@@ -346,6 +358,10 @@ class AIMMD_TIS:
             n_thermalize=n_thermalize,
             origin_label=origin_label,
             iteration=iteration,
+            descriptor_storage_path=descriptor_storage_path,
+            descriptor_set_name=descriptor_set_name,
+            descriptor_name=descriptor_name,
+            descriptor_flush_every=descriptor_flush_every,
         )
 
     def run_TIS(self, 
@@ -363,7 +379,11 @@ class AIMMD_TIS:
                 cvs_dict=None,
                 n_thermalize=0,
                 origin_label=None,
-                iteration=None):
+                iteration=None,
+                descriptor_storage_path=None,
+                descriptor_set_name=None,
+                descriptor_name="descriptors",
+                descriptor_flush_every=1):
 
 
         print("Creating network...")
@@ -461,7 +481,66 @@ class AIMMD_TIS:
             storage.save(sampler)
             print("Runnng MISTIS at interface q={}".format(interface_value))
             print("Now performing MC steps: ",n_mc_steps)
-            sampler.run(n_mc_steps)
+            desc_storage = None
+            next_storage_index = 0
+            if descriptor_storage_path is not None:
+                try:
+                    from ops_setup.descriptor_storage import DescriptorStorage
+                    from ops_setup.descriptor_storage import get_last_storage_index
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Descriptor storage requested but ops_setup.descriptor_storage is unavailable"
+                    ) from exc
+
+                descriptor_storage_path = Path(descriptor_storage_path)
+                descriptor_storage_path.parent.mkdir(parents=True, exist_ok=True)
+                descriptor_set_name = descriptor_set_name or direction
+                next_storage_index = get_last_storage_index(
+                    descriptor_storage_path,
+                    descriptor_set_name,
+                    float(interface_value),
+                )
+                mode = "a" if descriptor_storage_path.with_suffix(".meta.json").exists() else "w"
+                desc_storage = DescriptorStorage(
+                    descriptor_storage_path,
+                    mode=mode,
+                    method_type="TIS",
+                )
+                print(
+                    "Descriptor storage enabled: {} (set='{}', start_index={})".format(
+                        descriptor_storage_path,
+                        descriptor_set_name,
+                        next_storage_index,
+                    )
+                )
+
+            try:
+                for step_ind in range(int(n_mc_steps)):
+                    sampler.run(1)
+                    if desc_storage is None:
+                        continue
+
+                    traj = storage.steps[-1].active[0].trajectory
+                    desc_arr = np.asarray(self.model.descriptor_transform(traj))
+                    if desc_arr.ndim == 1:
+                        desc_arr = desc_arr.reshape(-1, 1)
+
+                    desc_storage.add_trajectory(
+                        set_name=descriptor_set_name,
+                        interface_value=float(interface_value),
+                        descriptors={descriptor_name: desc_arr},
+                        n_points=len(traj),
+                        storage_index=next_storage_index,
+                    )
+                    next_storage_index += 1
+
+                    if descriptor_flush_every is not None and descriptor_flush_every > 0:
+                        if ((step_ind + 1) % int(descriptor_flush_every)) == 0:
+                            desc_storage.flush()
+            finally:
+                if desc_storage is not None:
+                    desc_storage.close()
+
             print('snapshots:', len(storage.snapshots))
             print('trajectories:', len(storage.trajectories))
             print('samples:', len(storage.samples))

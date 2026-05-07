@@ -6,6 +6,7 @@ This module provides a clean separation between:
 """
 
 from .base import BaseVisualizer
+from .general import SystemVisualizer
 from .toy import ToyVisualizer
 
-__all__ = ["BaseVisualizer", "ToyVisualizer"]
+__all__ = ["BaseVisualizer", "SystemVisualizer", "ToyVisualizer"]

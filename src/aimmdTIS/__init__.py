@@ -18,6 +18,8 @@ from .training import (
     snapshot_loss_low_q_scaled,
 )
 from .visualization import (
+    BaseVisualizer,
+    SystemVisualizer,
     ToyVisualizer
 )
 from .diagnostics import (

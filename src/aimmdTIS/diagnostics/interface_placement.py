@@ -120,7 +120,16 @@ def check_interfaces(model, stable_states, descriptors, weights=None, shot_resul
             raise ValueError("Provide `in_state` or both `weights` and `shot_results` to calculate it.")
 
     min_max_stable_q = _compute_min_max_from_q(q_total, stable_states, in_state)
-    return _build_interface_result(min_max_stable_q, overlap=overlap)
+
+
+    forward_interfaces, backward_interfaces = _build_interface_result(min_max_stable_q, overlap=overlap)
+    # TODO: this now does not return the same outputs as check interface from stable, make consistent and into subfunctions
+    return {
+        "forward_interfaces": forward_interfaces,
+        "backward_interfaces": backward_interfaces,
+        "min_max_stable_q": min_max_stable_q,
+    }
+
 
 
 def check_interfaces_from_stable_storage(

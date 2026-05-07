@@ -7,7 +7,7 @@ provide a clean structure for adding future plotting methods.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Callable, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 import torch
@@ -146,7 +146,7 @@ class BaseVisualizer:
             dims_extent=dims_extent,
             standard_value=standard_value,
         )
-        q = model.log_prob(torch.as_tensor(coord, device=model._device), use_transform=False)
+        q = model.log_prob(coord, use_transform=False)
         q = q.reshape((len(yedges), len(xedges)))
         X, Y = np.meshgrid(xedges, yedges)
 
@@ -221,15 +221,48 @@ class BaseVisualizer:
         model,
         ax: Optional[plt.Axes] = None,
         levels: Optional[Iterable[float]] = None,
+        n_bins_2d: int = 300,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        dims_extent: Optional[Iterable[float]] = None,
+        standard_value: Optional[Iterable[float]] = None,
+        grid_to_plot_transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,
         **kwargs,
     ) -> plt.Axes:
         """Plot q(x) contour lines for a model."""
-        q, X, Y = self.compute_q_model_2d(model)
+        dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        q, X, Y = self.compute_q_model_2d(
+            model,
+            n_bins_2d=n_bins_2d,
+            descriptor_dims=dims,
+            dims_extent=dims_extent,
+            standard_value=standard_value,
+            cache_key=f"q_model_2d_{dims}_{n_bins_2d}_{tuple(dims_extent) if dims_extent is not None else tuple(self.dims_extent)}",
+        )
+
+        X_plot = X
+        Y_plot = Y
+        if grid_to_plot_transform is not None:
+            if self.total_num_descriptors is None:
+                raise ValueError("total_num_descriptors must be set when using grid_to_plot_transform")
+
+            if standard_value is None:
+                if self.standard_value is None:
+                    standard_value = [0.0] * self.total_num_descriptors
+                else:
+                    standard_value = list(self.standard_value)
+
+            points = np.tile(np.asarray(standard_value, dtype=float), (X.size, 1))
+            points[:, dims[0]] = X.ravel()
+            points[:, dims[1]] = Y.ravel()
+            mapped = np.asarray(grid_to_plot_transform(points), dtype=float)
+            X_plot = mapped[:, dims[0]].reshape(X.shape)
+            Y_plot = mapped[:, dims[1]].reshape(Y.shape)
+
         if levels is not None:
             levels = np.sort(np.array(levels))
         if ax is None:
             _, ax = plt.subplots(1, 1)
-        contour = ax.contour(X, Y, q, levels=levels, **kwargs)
+        contour = ax.contour(X_plot, Y_plot, q, levels=levels, **kwargs)
         ax.clabel(contour, inline=1, fontsize=self.plot_settings.fontsize * 0.6)
         return ax
 
