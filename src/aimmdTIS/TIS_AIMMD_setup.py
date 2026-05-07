@@ -383,7 +383,9 @@ class AIMMD_TIS:
                 descriptor_storage_path=None,
                 descriptor_set_name=None,
                 descriptor_name="descriptors",
-                descriptor_flush_every=1):
+                descriptor_flush_every=1,
+                log_diagnostics=False
+                ):
 
 
         print("Creating network...")
@@ -514,9 +516,35 @@ class AIMMD_TIS:
                     )
                 )
 
+            def _fmt_duration(seconds):
+                """Format seconds as d:HH:MM."""
+                seconds = int(seconds)
+                d, rem = divmod(seconds, 86400)
+                h, rem = divmod(rem, 3600)
+                m = rem // 60
+                return f"{d}d {h:02d}:{m:02d}"
+
+            import time as _time
+            _t_start = _time.monotonic()
+            _step_times = []
             try:
                 for step_ind in range(int(n_mc_steps)):
+                    _t_step_start = _time.monotonic()
                     sampler.run(1)
+                    _step_elapsed = _time.monotonic() - _t_step_start
+                    _step_times.append(_step_elapsed)
+                    _avg_step = sum(_step_times) / len(_step_times)
+                    _steps_done = step_ind + 1
+                    _steps_left = int(n_mc_steps) - _steps_done
+                    _elapsed_total = _time.monotonic() - _t_start
+                    _eta = _avg_step * _steps_left
+                    print(
+                        f"  step {_steps_done}/{int(n_mc_steps)} | "
+                        f"step={_step_elapsed:.1f}s avg={_avg_step:.1f}s | "
+                        f"elapsed={_fmt_duration(_elapsed_total)} "
+                        f"ETA={_fmt_duration(_eta)}",
+                        flush=True,
+                    )
                     if desc_storage is None:
                         continue
 
@@ -555,6 +583,11 @@ class AIMMD_TIS:
                 origin_label=origin_label,
                 iteration=iteration,
             )
+            if log_diagnostics:
+                print(move_scheme.move_summary(storage.steps))
+                for i, step in enumerate(storage.steps[:]):
+                    print(f"Step {i+1}: {step.change.canonical.details}")
+
 
             stable_origin = self._sanitize_label(origin_label) or self.cv_label
             return {
