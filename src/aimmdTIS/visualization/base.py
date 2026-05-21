@@ -305,3 +305,130 @@ class BaseVisualizer:
         if ax.figure is not None:
             ax.figure.colorbar(im, ax=ax)
         return ax
+
+    # -------------------------
+    # Committor projections from RPE data
+    # -------------------------
+    def compute_committor_2d(
+        self,
+        descriptors: np.ndarray,
+        weights: np.ndarray,
+        shot_results: np.ndarray,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        n_bins_2d: int = 100,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute a 2D committor p_B histogram from RPE descriptors, weights, and shot results.
+
+        The shot-result encoding is [[2,0]=AA, [1,1]=AB, [0,2]=BB] per snapshot.
+        The weighted histogram of shot_results[:,1] (B-side count) divided by the
+        total weighted histogram gives the per-bin committor estimate.
+
+        Parameters
+        ----------
+        descriptors
+            Array of shape (N, n_dims) — descriptor values for all snapshots.
+        weights
+            Array of shape (N,) — MBAR weights (already normalised).
+        shot_results
+            Array of shape (N, 2) — per-snapshot shot-result encoding.
+        descriptor_dims
+            Which two dimensions to project onto (x, y).  Defaults to self.descriptor_dims.
+        n_bins_2d
+            Number of bins along each axis.
+
+        Returns
+        -------
+        p_B : np.ndarray, shape (n_bins, n_bins)
+            Committor estimate; NaN where no data.
+        xedges, yedges : np.ndarray
+            Bin edge arrays.
+        """
+        dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+        extent = self.dims_extent
+
+        H_pB, _, _ = np.histogram2d(
+            descriptors[:, dims[0]],
+            descriptors[:, dims[1]],
+            bins=(xedges, yedges),
+            range=[[extent[0], extent[1]], [extent[2], extent[3]]],
+            weights=weights * shot_results[:, 1],
+        )
+        H_pA, _, _ = np.histogram2d(
+            descriptors[:, dims[0]],
+            descriptors[:, dims[1]],
+            bins=(xedges, yedges),
+            range=[[extent[0], extent[1]], [extent[2], extent[3]]],
+            weights=weights * shot_results[:, 0],
+        )
+
+        normalizing = H_pA.T + H_pB.T
+        with np.errstate(invalid="ignore", divide="ignore"):
+            p_B = np.where(normalizing > 0, H_pB.T / normalizing, np.nan)
+
+        return p_B, xedges, yedges
+
+    def plot_committor_rpe(
+        self,
+        descriptors: np.ndarray,
+        weights: np.ndarray,
+        shot_results: np.ndarray,
+        ax: Optional[plt.Axes] = None,
+        n_bins_2d: int = 100,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        cmap: str = "Spectral",
+        vmin: float = 0.0,
+        vmax: float = 1.0,
+        **kwargs,
+    ) -> plt.Axes:
+        """Plot the 2D committor p_B projection from RPE data.
+
+        Parameters
+        ----------
+        descriptors, weights, shot_results
+            Combined RPE arrays (e.g. from ``create_total_trainset``).
+        cmap
+            Colormap; "Spectral" maps 0→1 from blue (A) to red (B).
+        vmin, vmax
+            Colour scale limits (default 0..1).
+        """
+        p_B, xedges, yedges = self.compute_committor_2d(
+            descriptors, weights, shot_results,
+            descriptor_dims=descriptor_dims, n_bins_2d=n_bins_2d,
+        )
+        X, Y = np.meshgrid(xedges, yedges)
+        if ax is None:
+            _, ax = plt.subplots(1, 1)
+        im = ax.pcolormesh(X, Y, p_B, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
+        if ax.figure is not None:
+            ax.figure.colorbar(im, ax=ax, label=r"$p_B$")
+        return ax
+
+    def plot_logit_committor_rpe(
+        self,
+        descriptors: np.ndarray,
+        weights: np.ndarray,
+        shot_results: np.ndarray,
+        ax: Optional[plt.Axes] = None,
+        n_bins_2d: int = 100,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        cmap: str = "Spectral",
+        **kwargs,
+    ) -> plt.Axes:
+        r"""Plot the 2D logit-committor  q = log(p_B / (1 - p_B))  from RPE data.
+
+        Bins with p_B ∈ {0, 1} or no data are shown as NaN (masked).
+        """
+        p_B, xedges, yedges = self.compute_committor_2d(
+            descriptors, weights, shot_results,
+            descriptor_dims=descriptor_dims, n_bins_2d=n_bins_2d,
+        )
+        with np.errstate(invalid="ignore", divide="ignore"):
+            q = np.where((p_B > 0) & (p_B < 1), np.log(p_B / (1.0 - p_B)), np.nan)
+        X, Y = np.meshgrid(xedges, yedges)
+        if ax is None:
+            _, ax = plt.subplots(1, 1)
+        im = ax.pcolormesh(X, Y, q, cmap=cmap, **kwargs)
+        if ax.figure is not None:
+            ax.figure.colorbar(im, ax=ax, label=r"$q = \ln(p_B\,/\,(1-p_B))$")
+        return ax
