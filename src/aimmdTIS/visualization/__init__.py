@@ -7,6 +7,7 @@ This module provides a clean separation between:
 
 from .base import BaseVisualizer
 from .general import SystemVisualizer
+from .model_analysis import ModelAnalysisMixin
 from .toy import ToyVisualizer
 
-__all__ = ["BaseVisualizer", "SystemVisualizer", "ToyVisualizer"]
+__all__ = ["BaseVisualizer", "ModelAnalysisMixin", "SystemVisualizer", "ToyVisualizer"]

@@ -8,9 +8,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .base import BaseVisualizer
+from .model_analysis import ModelAnalysisMixin
 
 
-class SystemVisualizer(BaseVisualizer):
+class SystemVisualizer(BaseVisualizer, ModelAnalysisMixin):
     """General-purpose visualizer for descriptor-space analysis.
 
     This class provides reusable plotting helpers for real molecular systems
@@ -26,6 +27,8 @@ class SystemVisualizer(BaseVisualizer):
         dims_extent: Optional[Iterable[float]] = None,
         standard_value: Optional[Iterable[float]] = None,
         descriptor_labels: Optional[Sequence[str]] = None,
+        desc_min: Optional[Iterable[float]] = None,
+        desc_max: Optional[Iterable[float]] = None,
     ) -> None:
         super().__init__(
             temperature=temperature,
@@ -34,6 +37,8 @@ class SystemVisualizer(BaseVisualizer):
             total_num_descriptors=total_num_descriptors,
             dims_extent=dims_extent,
             standard_value=standard_value,
+            desc_min=desc_min,
+            desc_max=desc_max,
         )
         self.descriptor_labels = list(descriptor_labels) if descriptor_labels is not None else None
 
