@@ -57,17 +57,20 @@ def _q_committor_pkl(snapshot, nnet_location, descriptor_transform, batch_size):
     descriptors = descriptor_transform(snapshot)
     with open(nnet_location, "rb") as file_handle:
         nnet = pickle.load(file_handle)
-    return _predict_with_nnet(descriptors, nnet, batch_size)
+    pred = _predict_with_nnet(descriptors, nnet, batch_size)
+    return float(np.asarray(pred).reshape(-1)[0])
 
 
 def _q_committor_nnet(snapshot, nnet, descriptor_transform, batch_size):
     descriptors = descriptor_transform(snapshot)
-    return _predict_with_nnet(descriptors, nnet, batch_size)
+    pred = _predict_with_nnet(descriptors, nnet, batch_size)
+    return float(np.asarray(pred).reshape(-1)[0])
 
 
 def _q_committor_temp(snapshot, descriptor_transform, weights, bias):
     descriptors = descriptor_transform(snapshot)
-    return np.dot(descriptors, weights[:len(descriptors)]) + bias
+    pred = np.dot(descriptors, weights[:len(descriptors)]) + bias
+    return float(np.asarray(pred).reshape(-1)[0])
 
 
 class AIMMD_TIS:
