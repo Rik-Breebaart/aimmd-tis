@@ -6,6 +6,7 @@ and dataset helper utilities in one discoverable location.
 
 from .loops import (
     train_one_stage,
+    epoch_projected_gradient_contributions,
     _apply_stage_hparams,
     _make_optimizer,
     TorchRCModelLite,
@@ -18,6 +19,7 @@ from .losses import (
     snapshot_lnP,
     snapshot_loss_low_q_scaled,
     snapshot_loss_sqrt_rho_weight,
+    snapshot_loss_softplus,
 )
 from .dataset import (
     train_test_split,
@@ -40,6 +42,7 @@ combined_train_function_l1_regularized = train_one_stage
 
 __all__ = [
     "train_one_stage",
+    "epoch_projected_gradient_contributions",
     "_apply_stage_hparams",
     "_make_optimizer",
     "TorchRCModelLite",
@@ -49,6 +52,7 @@ __all__ = [
     "combined_train_function_l1_regularized",
     "q_histogram_plot",
     "snapshot_loss_original",
+    "snapshot_loss_softplus",
     "snapshot_loss_smoothness",
     "snapshot_loss_normalized_q",
     "snapshot_lnP",

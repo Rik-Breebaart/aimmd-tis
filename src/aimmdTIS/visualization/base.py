@@ -74,6 +74,7 @@ class BaseVisualizer:
         self.plot_settings = PlotSettings()
         self._cache: Dict[str, object] = {}
         self._model_output_cache: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+        self._gradient_output_cache: Dict[int, Dict[str, object]] = {}
         self.RPE = None
         # Flat-array trainset (new interface, set via load_trainset)
         self._desc: Optional[np.ndarray] = None       # scaled space (model input)
@@ -103,6 +104,7 @@ class BaseVisualizer:
         self._make_desc_phys()
         # Invalidate any cached model output — data has changed.
         self._model_output_cache.clear()
+        self._gradient_output_cache.clear()
 
     def _make_desc_phys(self) -> None:
         """Compute ``_desc_phys`` from ``_desc`` using the stored min/max scaling.
@@ -120,6 +122,14 @@ class BaseVisualizer:
         # Guard against zero-range dimensions (e.g. constant descriptor).
         scale = np.where(scale != 0, scale, 1.0).astype(np.float32)
         self._desc_phys = self._desc * scale + self._desc_min.astype(np.float32)
+    
+    def _scale_desc_phys_to_desc_scaled(self, descriptors_phys: np.ndarray) -> np.ndarray:
+        """Scale physical descriptor values to the model's input space."""
+        if self._desc_min is None or self._desc_max is None:
+            return descriptors_phys
+        scale = (self._desc_max - self._desc_min).astype(np.float32)
+        scale = np.where(scale != 0, scale, 1.0).astype(np.float32)
+        return (descriptors_phys - self._desc_min.astype(np.float32)) / scale
 
     def set_descriptor_scaling(
         self,
@@ -141,6 +151,7 @@ class BaseVisualizer:
         """Clear all cached grids, histograms, and model outputs."""
         self._cache.clear()
         self._model_output_cache.clear()
+        self._gradient_output_cache.clear()
 
     def _model_output_rpe(self, model) -> Tuple[np.ndarray, np.ndarray]:
         """Return ``(p_B, q)`` for all stored RPE frames.
@@ -300,7 +311,8 @@ class BaseVisualizer:
             raise ValueError("RPE must be set before computing histograms")
 
         dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
-        cache_key = f"hist_{dims}_{n_bins_2d}"
+        n_bins_2d_tuple = (n_bins_2d, n_bins_2d) if np.shape(n_bins_2d) == () else tuple(n_bins_2d)
+        cache_key = f"hist_{dims}_{n_bins_2d_tuple[0]}_{n_bins_2d_tuple[1]}"
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -324,6 +336,18 @@ class BaseVisualizer:
         self._cache[cache_key] = hist
         return hist
 
+    def smooth_histogram(self, H: np.ndarray, sigma: float = 1.0) -> np.ndarray:
+
+        from scipy.ndimage import gaussian_filter
+
+        nan_mask = np.isnan(H)
+        H_filled = np.where(nan_mask, 0.0, H)
+        w_mask = (~nan_mask).astype(float)
+        sm_num = gaussian_filter(H_filled, sigma=sigma)
+        sm_den = gaussian_filter(w_mask,   sigma=sigma)
+        with np.errstate(invalid="ignore"):
+            H_smooth = np.where(sm_den > 1e-3, sm_num / sm_den, np.nan)
+        return H_smooth
     # -------------------------
     # Plotting helpers
     # -------------------------
@@ -341,13 +365,17 @@ class BaseVisualizer:
     ) -> plt.Axes:
         """Plot q(x) contour lines for a model."""
         dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        if np.shape(n_bins_2d) == ():
+            n_bins_2d_tuple = (n_bins_2d, n_bins_2d)
+        else:
+            n_bins_2d_tuple = tuple(n_bins_2d)
         q, X, Y = self.compute_q_model_2d(
             model,
             n_bins_2d=n_bins_2d,
             descriptor_dims=dims,
             dims_extent=dims_extent,
             standard_value=standard_value,
-            cache_key=f"q_model_2d_{dims}_{n_bins_2d}_{tuple(dims_extent) if dims_extent is not None else tuple(self.dims_extent)}",
+            cache_key=f"q_model_2d_{dims}_{n_bins_2d_tuple[0]}_{n_bins_2d_tuple[1]}_{tuple(dims_extent) if dims_extent is not None else tuple(self.dims_extent)}",
         )
 
         X_plot = X
@@ -429,6 +457,7 @@ class BaseVisualizer:
         offset: bool = True,
         v_min_max: Optional[Tuple[float, float]] = None,
         cmap: str = "Blues_r",
+        smooth_sigma: Optional[float] = 0.0,
     ):
         """Plot the MBAR-weighted free-energy surface $\\Delta F = -\\ln\\rho$.
 
@@ -461,9 +490,9 @@ class BaseVisualizer:
             raise ValueError("load_trainset() must be called before plot_rpe_free_energy.")
         dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
         xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
-
+        n_bins_2d_tuple = (n_bins_2d, n_bins_2d) if np.shape(n_bins_2d) == () else tuple(n_bins_2d)
         extent_key = tuple(self.dims_extent)
-        cache_key = f"fe2d_{dims}_{np.shape(n_bins_2d)}_{extent_key}"
+        cache_key = f"fe2d_{dims}_{n_bins_2d_tuple[0]}_{n_bins_2d_tuple[1]}_{extent_key}"
         if cache_key not in self._cache:
             # Use physical-space descriptors so axes reflect real units.
             desc_plot = self._desc_phys if self._desc_phys is not None else self._desc
@@ -487,6 +516,9 @@ class BaseVisualizer:
             _, ax = plt.subplots(1, 1)
         vmin = v_min_max[0] if v_min_max is not None else None
         vmax = v_min_max[1] if v_min_max is not None else None
+        if smooth_sigma is not None and smooth_sigma > 0:
+            fe = self.smooth_histogram(fe, sigma=smooth_sigma)
+
         im = ax.imshow(
             fe,
             origin="lower",
@@ -505,6 +537,7 @@ class BaseVisualizer:
         ax: Optional[plt.Axes] = None,
         v_min_max: Optional[Tuple[float, float]] = None,
         cmap: str = "Spectral",
+        smooth_sigma: Optional[float] = 0.0,
     ):
         """Plot the data-estimated committor $q = \\ln(p_B/p_A)$ from shot results.
 
@@ -548,14 +581,12 @@ class BaseVisualizer:
             bins=[xedges, yedges], weights=self._w * n_A, density=False,
         )
         mask = (H_B + H_A) > 0
+        P_B = np.where(mask, H_B / (H_B + H_A), np.nan)
         with np.errstate(divide="ignore", invalid="ignore"):
-            q = np.where(
-                mask,
-                np.log(np.where(H_B > 0, H_B, 1e-20)) - np.log(np.where(H_A > 0, H_A, 1e-20)),
-                np.nan,
-            )
+            q = np.where(mask, np.log(P_B / (1 - P_B)), np.nan)
         q = q.T  # (ny, nx) for imshow with origin='lower'
-
+        if smooth_sigma is not None and smooth_sigma > 0:
+            q = self.smooth_histogram(q, sigma=smooth_sigma)
         if ax is None:
             _, ax = plt.subplots(1, 1)
         vmin, vmax = (v_min_max[0], v_min_max[1]) if v_min_max is not None else (-10, 10)
@@ -569,3 +600,425 @@ class BaseVisualizer:
             norm=norm,
         )
         return im
+
+    def plot_q_model_projection(
+        self,
+        model,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        n_bins_2d: int | Tuple[int, int] = 100,
+        ax: Optional[plt.Axes] = None,
+        v_min_max: Optional[Tuple[float, float]] = None,
+        cmap: str = "Spectral",
+        logit: bool = True,
+        smooth_sigma: Optional[float] = 0.0,
+    ):
+        """Plot the MBAR-weighted average model committor projected onto 2-D descriptor space.
+
+        For every 2-D spatial bin the plotted value is
+
+        .. math::
+            \\langle q(x|\\theta) \\rangle_{\\text{bin}} =
+                \\frac{\\sum_{i \\in \\text{bin}} w_i\\, q_i}{\\sum_{i \\in \\text{bin}} w_i}
+
+        where :math:`q_i = \\log(p_B / p_A)` is the logit committor (``logit=True``,
+        default) or the linear committor :math:`p_B` (``logit=False``).
+
+        Unlike :meth:`plot_q_contours` this does **not** evaluate the model on a
+        grid — it bins the *actual* RPE data points using the cached model output
+        from :meth:`_model_output_rpe`, so the result reflects the distribution of
+        visited configurations.
+
+        The result is cached by ``(descriptor_dims, n_bins_2d, id(model), logit)``.
+
+        Parameters
+        ----------
+        model
+            Trained committor model.
+        descriptor_dims
+            Two descriptor indices for x and y axes.
+        n_bins_2d
+            Histogram bins, scalar or ``(nx, ny)``.
+        ax
+            Axes to draw on; created if *None*.
+        v_min_max
+            Colour-scale limits ``(vmin, vmax)``.  Defaults to ``(-15, 15)``
+            for logit and ``(0, 1)`` for linear committor.
+        cmap
+            Colour map.  ``"Spectral"`` works well for signed logit q (diverging),
+            ``"viridis"`` for linear :math:`p_B`.
+        logit
+            If *True* (default) plot the logit committor :math:`q = \\ln(p_B/p_A)`.
+            If *False* plot the linear committor :math:`p_B \\in [0, 1]`.
+
+        Returns
+        -------
+        im
+            The ``AxesImage`` returned by :func:`~matplotlib.axes.Axes.imshow`.
+        """
+        if self._desc is None:
+            raise ValueError("load_trainset() must be called before plot_q_model_projection.")
+
+        dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+        if np.shape(n_bins_2d) == ():
+            n_bins_2d_tuple = (n_bins_2d, n_bins_2d)
+        else:
+            n_bins_2d_tuple = tuple(n_bins_2d)
+        extent_key = tuple(self.dims_extent)
+        cache_key = f"q_model_proj_{dims}_{n_bins_2d_tuple[0]}_{n_bins_2d_tuple[1]}_{extent_key}_{id(model)}_{'logit' if logit else 'pB'}"
+
+        if cache_key not in self._cache:
+            p_B_arr, q_arr = self._model_output_rpe(model)
+            values = q_arr if logit else p_B_arr
+
+            desc_plot = self._desc_phys if self._desc_phys is not None else self._desc
+            x = desc_plot[:, dims[0]]
+            y = desc_plot[:, dims[1]]
+
+            # Weighted sum of committor values per bin
+            H_val, _, _ = np.histogram2d(
+                x, y, bins=[xedges, yedges], weights=self._w * values,
+            )
+            # Total weight per bin (normaliser)
+            H_norm, _, _ = np.histogram2d(
+                x, y, bins=[xedges, yedges], weights=self._w,
+            )
+            with np.errstate(invalid="ignore"):
+                mean_val = np.where(H_norm > 0, H_val / H_norm, np.nan)
+            self._cache[cache_key] = mean_val
+
+        mean_val = self._cache[cache_key]
+        img = mean_val.T  # (ny, nx) for imshow with origin='lower'
+        if smooth_sigma > 0:
+            img = self.smooth_histogram(img, sigma=smooth_sigma)
+
+        if ax is None:
+            _, ax = plt.subplots(1, 1)
+
+        if v_min_max is not None:
+            vmin, vmax = v_min_max
+        elif logit:
+            vmin, vmax = -15.0, 15.0
+        else:
+            vmin, vmax = 0.0, 1.0
+
+        if logit:
+            norm = matplotlib.colors.TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+            im = ax.imshow(
+                img,
+                origin="lower",
+                aspect="auto",
+                extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+                cmap=cmap,
+                norm=norm,
+            )
+        else:
+            im = ax.imshow(
+                img,
+                origin="lower",
+                aspect="auto",
+                extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+            )
+        return im
+
+    def plot_q_model_projection_contours(
+        self,
+        model,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        n_bins_2d: int | Tuple[int, int] = 100,
+        ax: Optional[plt.Axes] = None,
+        levels: Optional[Iterable[float]] = None,
+        logit: bool = True,
+        colors: str = "black",
+        linewidths: float = 0.8,
+        alpha: float = 0.7,
+        smooth_sigma: Optional[float] = 0.0,
+        linestyles: str = "solid",
+        clabel: bool = False,
+        clabel_fontsize: int = 7,
+    ):
+        """Contour lines of the MBAR-weighted model committor projection.
+
+        Reuses the grid already cached by :meth:`plot_q_model_projection` (same
+        ``descriptor_dims``, ``n_bins_2d`` and ``logit`` arguments).  If the
+        cache entry is missing the histogram is computed on the fly.
+
+        Parameters
+        ----------
+        model
+            Trained committor model.
+        descriptor_dims
+            Two descriptor indices for x and y axes.
+        n_bins_2d
+            Must match the value used for the background heatmap.
+        ax
+            Axes to draw on; uses current axes if *None*.
+        levels
+            Contour levels.  Defaults to ``[-15,-10,-5,-3,-1,0,1,3,5,10,15]``
+            for logit q and ``[0.1,0.2,0.3,0.5,0.7,0.8,0.9]`` for linear pB.
+        logit
+            Must match the value used for the background heatmap.
+        colors, linewidths, alpha, linestyles
+            Passed directly to :func:`~matplotlib.axes.Axes.contour`.
+        clabel
+            If *True*, inline contour labels are drawn.
+        clabel_fontsize
+            Font size for inline labels.
+
+        Returns
+        -------
+        cs
+            The :class:`~matplotlib.contour.QuadContourSet` instance.
+        """
+        dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+
+        extent_key = tuple(self.dims_extent)
+        if np.shape(n_bins_2d) == ():
+            n_bins_2d_tuple = (n_bins_2d, n_bins_2d)
+        else:
+            n_bins_2d_tuple = tuple(n_bins_2d)
+        cache_key = (
+            f"q_model_proj_{dims}_{n_bins_2d_tuple[0]}_{n_bins_2d_tuple[1]}_{extent_key}"
+            f"_{id(model)}_{'logit' if logit else 'pB'}"
+        )
+
+        if cache_key not in self._cache:
+            # Populate the cache via the heatmap method (draw into a temp axes)
+            import matplotlib
+            fig_tmp, ax_tmp = plt.subplots(1, 1)
+            self.plot_q_model_projection(
+                model, descriptor_dims=dims, n_bins_2d=n_bins_2d, ax=ax_tmp, logit=logit
+            )
+            plt.close(fig_tmp)
+
+        mean_val = self._cache[cache_key]  # (nx, ny)
+
+        xc = (xedges[:-1] + xedges[1:]) / 2
+        yc = (yedges[:-1] + yedges[1:]) / 2
+        Xc, Yc = np.meshgrid(xc, yc)
+        
+        Z = np.ma.masked_invalid(mean_val.T)  # (ny, nx)
+        if smooth_sigma > 0:
+            Z = self.smooth_histogram(Z, sigma=smooth_sigma)
+
+        if levels is None:
+            if logit:
+                levels = [-15, -10, -5, -3, -1, 0, 1, 3, 5, 10, 15]
+            else:
+                levels = [0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9]
+
+        if ax is None:
+            ax = plt.gca()
+
+        cs = ax.contour(
+            Xc, Yc, Z,
+            levels=levels,
+            colors=colors,
+            linewidths=linewidths,
+            alpha=alpha,
+            linestyles=linestyles,
+        )
+        if clabel:
+            ax.clabel(cs, inline=True, fontsize=clabel_fontsize)
+        return cs
+
+    def plot_shot_committor_contours(
+        self,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        n_bins_2d: int | Tuple[int, int] = 100,
+        ax: Optional[plt.Axes] = None,
+        levels: Optional[Iterable[float]] = None,
+        colors: str = "dimgray",
+        linewidths: float = 0.9,
+        alpha: float = 0.8,
+        linestyles: str = "dashed",
+        smooth_sigma: Optional[float] = 1.5,
+        clabel: bool = False,
+        clabel_fontsize: int = 7,
+    ):
+        """Contour lines of the data-estimated committor from shot results.
+
+        Uses the same MBAR-weighted histogram computation as
+        :meth:`plot_q_committor_from_shots` but draws isolines instead of a
+        filled heatmap.  Optional Gaussian smoothing reduces contouring artefacts
+        in sparsely populated bins.
+
+        Parameters
+        ----------
+        descriptor_dims
+            Two descriptor indices for x and y axes.
+        n_bins_2d
+            Histogram bin count, scalar or ``(nx, ny)``.
+        ax
+            Axes to draw on.
+        levels
+            Contour levels in logit :math:`q = \\ln(p_B/p_A)`.
+            Default: ``[-5, -3, -1, 0, 1, 3, 5]``.
+        colors, linewidths, alpha, linestyles
+            Passed to :func:`~matplotlib.axes.Axes.contour`.
+        smooth_sigma
+            Standard deviation (in bins) for Gaussian smoothing applied before
+            contouring.  Set to ``0`` to skip smoothing.
+        clabel
+            If *True*, inline contour labels are drawn.
+        clabel_fontsize
+            Font size for inline labels.
+
+        Returns
+        -------
+        cs
+            The :class:`~matplotlib.contour.QuadContourSet` instance.
+        """
+        if self._desc is None:
+            raise ValueError("load_trainset() must be called before plot_shot_committor_contours.")
+
+        dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+
+        n_B = self._shot[:, 1]
+        n_A = self._shot[:, 0]
+        desc_plot = self._desc_phys if self._desc_phys is not None else self._desc
+
+        H_B, _, _ = np.histogram2d(
+            desc_plot[:, dims[0]], desc_plot[:, dims[1]],
+            bins=[xedges, yedges], weights=self._w * n_B, density=False,
+        )
+        H_A, _, _ = np.histogram2d(
+            desc_plot[:, dims[0]], desc_plot[:, dims[1]],
+            bins=[xedges, yedges], weights=self._w * n_A, density=False,
+        )
+        mask = (H_B + H_A) > 0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            q = np.where(
+                mask,
+                np.log(np.where(H_B > 0, H_B, 1e-20)) - np.log(np.where(H_A > 0, H_A, 1e-20)),
+                np.nan,
+            )
+
+        q_plot = q.T  # (ny, nx) to match meshgrid convention
+
+        if smooth_sigma > 0:
+            q_plot = self.smooth_histogram(q_plot, sigma=smooth_sigma)
+
+        xc = (xedges[:-1] + xedges[1:]) / 2
+        yc = (yedges[:-1] + yedges[1:]) / 2
+        Xc, Yc = np.meshgrid(xc, yc)
+        Z = np.ma.masked_invalid(q_plot)
+
+        if levels is None:
+            levels = [-5, -3, -1, 0, 1, 3, 5]
+
+        if ax is None:
+            ax = plt.gca()
+
+        cs = ax.contour(
+            Xc, Yc, Z,
+            levels=levels,
+            colors=colors,
+            linewidths=linewidths,
+            alpha=alpha,
+            linestyles=linestyles,
+        )
+        if clabel:
+            ax.clabel(cs, inline=True, fontsize=clabel_fontsize)
+        return cs
+
+    def plot_rpe_free_energy_contours(
+        self,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        n_bins_2d: int | Tuple[int, int] = 100,
+        ax: Optional[plt.Axes] = None,
+        offset: bool = True,
+        levels: Optional[Iterable[float]] = None,
+        colors: str = "black",
+        linewidths: float = 0.8,
+        alpha: float = 0.7,
+        linestyles: str = "solid",
+        smooth_sigma: float = 1.5,
+        clabel: bool = False,
+        clabel_fontsize: int = 7,
+    ):
+        """Contour lines of the MBAR-weighted free-energy surface.
+
+        Uses the same MBAR-weighted histogram computation as
+        :meth:`plot_rpe_free_energy` but draws isolines instead of a filled heatmap.
+
+        Parameters
+        ----------
+        descriptor_dims
+            Two descriptor indices for x and y axes.
+        n_bins_2d
+            Histogram bin count, scalar or ``(nx, ny)``.
+        ax
+            Axes to draw on; uses current axes if *None*.
+        levels
+            Contour levels in free energy units (default: ``[0, 1, 2, 3, 4, 5]``).
+        colors, linewidths, alpha, linestyles
+            Passed to :func:`~matplotlib.axes.Axes.contour`.
+        clabel
+            If *True*, inline contour labels are drawn.
+        clabel_fontsize
+            Font size for inline labels.
+
+        Returns
+        -------
+        cs
+            The :class:`~matplotlib.contour.QuadContourSet` instance.
+        """
+        if self._desc is None:
+            raise ValueError("load_trainset() must be called before plot_rpe_free_energy_contours.")
+
+        dims = tuple(descriptor_dims) if descriptor_dims is not None else self.descriptor_dims
+        xedges, yedges = self.create_x_y_edges(n_bins_2d=n_bins_2d)
+
+        extent_key = tuple(self.dims_extent)
+        if np.shape(n_bins_2d) == ():
+            n_bins_2d_tuple = (n_bins_2d, n_bins_2d)
+        else:
+            n_bins_2d_tuple = tuple(n_bins_2d)
+        cache_key = f"fe2d_{dims}_{n_bins_2d_tuple[0]}_{n_bins_2d_tuple[1]}_{extent_key}"
+
+        if cache_key not in self._cache:
+            # Populate the cache via the heatmap method (draw into a temp axes)
+            import matplotlib
+            fig_tmp, ax_tmp = plt.subplots(1, 1)
+            self.plot_rpe_free_energy(descriptor_dims=dims, n_bins_2d=n_bins_2d, ax=ax_tmp, offset=offset)
+            plt.close(fig_tmp)
+
+        H = self._cache[cache_key]
+
+        with np.errstate(divide="ignore"):
+            fe = np.where(H > 0, -np.log(H), np.nan)
+        if offset:
+            fe -= np.nanmin(fe)
+
+        xc = (xedges[:-1] + xedges[1:]) / 2
+        yc = (yedges[:-1] + yedges[1:]) / 2
+        Xc, Yc = np.meshgrid(xc, yc)
+        
+        Z = np.ma.masked_invalid(fe.T)  # (ny, nx)
+        if smooth_sigma > 0:
+            Z = self.smooth_histogram(Z, sigma=smooth_sigma)
+
+
+        if levels is None:
+            levels = [0, 1, 2, 3, 4, 5]
+
+        if ax is None:
+            ax = plt.gca()
+
+        cs = ax.contour(
+            Xc, Yc, Z,
+            levels=levels,
+            colors=colors,
+            linewidths=linewidths,
+            alpha=alpha,
+            linestyles=linestyles,
+        )
+        if clabel:
+            ax.clabel(cs, inline=True, fontsize=clabel_fontsize)
+        return cs

@@ -29,15 +29,28 @@ def snapshot_loss_original(q_output, weights_tensor, shot_results_tensor):
         + torch.where(shots[:, 1] == 0, zeros, t2)
     )
 
+def snapshot_loss_softplus(q_output, weights_tensor, shot_results_tensor):
+    q = q_output
+    shots = shot_results_tensor
+    weights = weights_tensor
+    t1 = shots[:, 0] * torch.nn.functional.softplus(q[:,0])
+    t2 = shots[:, 1] * torch.nn.functional.softplus(-q[:,0])
+    zeros = torch.zeros_like(t1)
+    return weights * (
+        torch.where(shots[:, 0] == 0, zeros, t1)
+        + torch.where(shots[:, 1] == 0, zeros, t2)
+    )
+
 
 def snapshot_loss_smoothness(
-    q_pred: torch.Tensor,
+    model_nnet: torch.nn.Module,
     descriptors: torch.Tensor,
     reduction: str = "none",
 ):
+    descriptors
     if not descriptors.requires_grad:
         descriptors.requires_grad_(True)
-
+    q_pred = model_nnet(descriptors)
     q = q_pred.view(-1, 1)
     grad = torch.autograd.grad(
         outputs=q,
@@ -56,9 +69,21 @@ def snapshot_loss_smoothness(
         out = out.sum()
     elif reduction != "none":
         raise ValueError("reduction must be 'none', 'mean', or 'sum'")
+    model_nnet.zero_grad()
 
     return out.detach()
 
+
+def snapshot_lnP(q_output, shot_results_tensor):
+    q = q_output
+    shots = shot_results_tensor
+    t1 = shots[:, 0] * torch.log(1.0 + torch.exp(q[:, 0]))
+    t2 = shots[:, 1] * torch.log(1.0 + torch.exp(-q[:, 0]))
+    zeros = torch.zeros_like(t1)
+    return torch.where(shots[:, 0] == 0, zeros, t1) + torch.where(shots[:, 1] == 0, zeros, t2)
+
+
+## Old analysis losses below, not currently used but kept for reference and potential future use
 
 def snapshot_loss_normalized_q(q_output, weights_tensor, shot_results_tensor):
     q = q_output
@@ -78,15 +103,6 @@ def snapshot_loss_normalized_q(q_output, weights_tensor, shot_results_tensor):
         torch.where(shots[:, 0] == 0, zeros, t1)
         + torch.where(shots[:, 1] == 0, zeros, t2)
     )
-
-
-def snapshot_lnP(q_output, shot_results_tensor):
-    q = q_output
-    shots = shot_results_tensor
-    t1 = shots[:, 0] * torch.log(1.0 + torch.exp(q[:, 0]))
-    t2 = shots[:, 1] * torch.log(1.0 + torch.exp(-q[:, 0]))
-    zeros = torch.zeros_like(t1)
-    return torch.where(shots[:, 0] == 0, zeros, t1) + torch.where(shots[:, 1] == 0, zeros, t2)
 
 
 def snapshot_loss_low_q_scaled(q_output, weights_tensor, shot_results_tensor):

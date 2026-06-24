@@ -9,6 +9,7 @@ from .fokker_plank_solver import interpolate, solve_committor_by_relaxation
 from .Toy_analysis import ToyAimmdVisualizer
 from .training import (
     train_one_stage,
+    epoch_projected_gradient_contributions,
     _apply_stage_hparams,
     _make_optimizer,
     TorchRCModelLite,
@@ -25,6 +26,15 @@ from .visualization import (
 from .diagnostics import (
     check_interfaces,
     check_interfaces_from_stable_storage,
+    load_committor_frame_data,
+    estimate_pb_from_shots,
+    bin_stats,
+    make_step_plot,
+    compute_validation,
+    save_validation_cache,
+    load_validation_cache,
+    run_validation_with_cache,
+    plot_validation_panels,
 )
 
 pretraining_train_function = train_one_stage
