@@ -343,6 +343,8 @@ def plot_validation_panels(
     alpha: float = 0.8,
     lim_q: float = 4.0,
     title: str = "Committor Validation",
+    ax: list[plt.Axes] | None = None,
+    fig: plt.Figure | None = None
 ):
     """Create the classic two-panel validation figure.
 
@@ -368,8 +370,8 @@ def plot_validation_panels(
         stats["bins_pb"],
         mask=stats["count_pb"] > 0,
     )
-
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    if ax is None or fig is None:
+        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
 
     ax[0].plot([-lim_q, lim_q], [-lim_q, lim_q], color="red", label="Ideal")
     ax[0].fill_betweenx(fill_y_q, lower_x_q, upper_x_q, color="blue", alpha=0.2, label="+-1 std dev")
@@ -378,8 +380,8 @@ def plot_validation_panels(
         ax[0].scatter(q_ref, q_model, alpha=alpha, color="black", s=10, label="Samples")
     else:
         ax[0].scatter(q_ref, q_model, alpha=alpha, c=colors[valid], s=10, label="Samples")
-    ax[0].set_xlabel("Committor analysis q")
-    ax[0].set_ylabel("Learned q")
+    ax[0].set_xlabel(r"Committor analysis $q$")
+    ax[0].set_ylabel(r"Learned $q$")
     ax[0].set_xlim([-lim_q, lim_q])
     ax[0].set_ylim([-lim_q, lim_q])
     ax[0].grid(True)
@@ -392,13 +394,13 @@ def plot_validation_panels(
         ax[1].scatter(p_b_ref, p_b_model, alpha=alpha, color="black", s=10, label="Samples")
     else:
         ax[1].scatter(p_b_ref, p_b_model, alpha=alpha, c=colors[valid], s=10, label="Samples")
-    ax[1].set_xlabel("Committor analysis p_B")
-    ax[1].set_ylabel("Learned p_B")
+    ax[1].set_xlabel(r"Committor analysis $p_B$")
+    ax[1].set_ylabel(r"Learned $p_B$")
     ax[1].set_xlim([0.0, 1.0])
     ax[1].set_ylim([0.0, 1.0])
     ax[1].grid(True)
     ax[1].legend()
-
-    fig.suptitle(title)
-    fig.tight_layout()
+    if fig is not None:
+        fig.suptitle(title)
+        fig.tight_layout()
     return fig, ax

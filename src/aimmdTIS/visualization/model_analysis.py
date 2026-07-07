@@ -443,6 +443,7 @@ class ModelAnalysisMixin:
             "gradient_unit_vector_per_q_bin":     np.zeros((num_bins, num_desc)),
             "gradient_unit_vector_per_q_bin_std": np.zeros((num_bins, num_desc)),
             "gradient_magnitude_per_q_bin":       np.zeros(num_bins),
+            "gradient_magnitude_per_q_bin_std":   np.zeros(num_bins),
             "norm_factors":                       norm_factors,
         }
 
@@ -465,7 +466,7 @@ class ModelAnalysisMixin:
             unit_vecs = grads_norm / safe_mag[:, np.newaxis]              # (N, D)
 
             result["gradient_magnitude_per_q_bin"][bin_idx] = float(np.mean(grad_mag))
-
+            result["gradient_magnitude_per_q_bin_std"][bin_idx] = float(np.std(grad_mag))
             result["gradients_per_q_bin"][bin_idx],     result["gradients_per_q_bin_std"][bin_idx]     = self._weighted_mean_std(grads_norm,        w_bin, axis=0)
             result["abs_gradients_per_q_bin"][bin_idx], result["abs_gradients_per_q_bin_std"][bin_idx] = self._weighted_mean_std(np.abs(grads_norm), w_bin, axis=0)
             result["gradient_unit_vector_per_q_bin"][bin_idx], result["gradient_unit_vector_per_q_bin_std"][bin_idx] = self._weighted_mean_std(unit_vecs, w_bin, axis=0)
@@ -876,3 +877,229 @@ class ModelAnalysisMixin:
         fig.subplots_adjust(left=0.08, right=0.85, bottom=0.2, top=0.88)
         return fig
 
+
+    def plot_gradient_unit_and_magnitude_along_q(
+        self,
+        model,
+        q_ranges=None,
+        q_spacing=None,
+        columns=None,
+        moving_avg=1,
+        q_smooth=0.0,
+        descriptor_labels=None,
+        plot_error=True,
+        norm_factors=None,
+        q_bins=None,
+        figsize=(14, 10),
+    ):
+        result = self.compute_gradient_stats_per_q(
+            model, norm_factors=norm_factors, q_bins=q_bins
+        )
+
+        labels = (
+            descriptor_labels
+            or (self.descriptor_labels if hasattr(self, "descriptor_labels") else None)
+            or [f"d{i}" for i in range(result["gradient_unit_vector_per_q_bin"].shape[1])]
+        )
+
+        bin_centers = result["bin_centers"]
+        grad_mean = result["gradients_per_q_bin"]
+        unit_std = result["gradient_unit_vector_per_q_bin_std"]
+        grad_mag = result["gradient_magnitude_per_q_bin"]
+        grad_mag_std = result["gradient_magnitude_per_q_bin_std"]
+
+        mag = np.linalg.norm(grad_mean, axis=1, keepdims=True)
+        unit_from_mean = np.divide(
+            grad_mean,
+            mag,
+            out=np.zeros_like(grad_mean),
+            where=mag > 1e-12,
+        )
+
+        if q_ranges is None:
+            q_ranges = [-45, -5, 0, 12]
+
+        if q_spacing is None:
+            q_spacing = [5, 1, 5]
+
+        n_segs = len(q_ranges) - 1
+
+        if columns is None:
+            base = 3
+            columns = [(i * base, (i + 1) * base) for i in range(n_segs)]
+
+        total_cols = max(end for _, end in columns)
+
+        fig = plt.figure(figsize=figsize)
+        gs = gridspec.GridSpec(
+            2,
+            total_cols,
+            height_ratios=[1.0, 2.4],
+            hspace=0.08,
+            wspace=0.1,
+        )
+
+        ax_mag_list = []
+        ax_unit_list = []
+
+        for i, (col_start, col_end) in enumerate(columns):
+            ax_mag = fig.add_subplot(gs[0, col_start:col_end])
+            ax_unit = fig.add_subplot(
+                gs[1, col_start:col_end],
+                sharex=ax_mag,
+                sharey=ax_unit_list[0] if ax_unit_list else None,
+            )
+
+            ax_mag_list.append(ax_mag)
+            ax_unit_list.append(ax_unit)
+
+            q_start, q_end = q_ranges[i], q_ranges[i + 1]
+            spacing = q_spacing[i] if i < len(q_spacing) else 5
+
+            for ax in (ax_mag, ax_unit):
+                ax.set_xlim(q_start, q_end)
+                ax.set_xticks(np.arange(q_start, q_end + 1e-9, spacing))
+                ax.grid(True, which="major", linestyle="--", alpha=0.5)
+
+            ax_mag.tick_params(labelbottom=False)
+
+            ax_unit.set_ylim(-1, 1)
+            ax_unit.axhline(0, color="black", linewidth=1, alpha=0.8)
+            ax_unit.tick_params(axis="x", labelrotation=0, labelsize=9)
+
+            if i != 0:
+                for ax in (ax_mag, ax_unit):
+                    ax.spines["left"].set_visible(False)
+                    ax.tick_params(labelleft=False, left=False)
+
+        ymax = 1.05 * np.nanmax(grad_mag)
+
+        for ax in ax_mag_list:
+            ax.plot(bin_centers, grad_mag, color="black", linewidth=2)
+            ax.fill_between(
+                bin_centers,
+                grad_mag - grad_mag_std,
+                grad_mag + grad_mag_std,
+                alpha=0.2,
+                color="black",
+            )
+            ax.set_ylim(0, ymax)
+
+        ax_mag_list[0].set_ylabel(
+            r"$|\nabla_{\xi} q|$",
+            fontsize=self.plot_settings.fontsize,
+        )
+
+        def _smooth(arr1d):
+            if q_smooth > 0:
+                return self._q_smooth(arr1d, bin_centers, q_smooth)
+            return self._moving_average(arr1d, moving_avg)
+
+        handles = []
+        num_desc = unit_from_mean.shape[1]
+
+        for dim in range(num_desc):
+            label = labels[dim] if dim < len(labels) else f"d{dim}"
+            y = _smooth(unit_from_mean[:, dim])
+            y_err = _smooth(unit_std[:, dim])
+
+            for i, ax in enumerate(ax_unit_list):
+                line, = ax.plot(bin_centers, y, label=label, linewidth=2)
+
+                if i == 0:
+                    handles.append(line)
+
+                if plot_error:
+                    ax.fill_between(
+                        bin_centers,
+                        y - y_err,
+                        y + y_err,
+                        alpha=0.2,
+                    )
+
+        ax_unit_list[0].set_ylabel(
+            r"Importance $\hat{g}_i(q')$",
+            fontsize=self.plot_settings.fontsize,
+        )
+
+        d = 0.012
+        kwargs_break = dict(color="k", clip_on=False, linewidth=1)
+
+        for axes in (ax_mag_list, ax_unit_list):
+            for i in range(1, len(axes)):
+                ax_l = axes[i - 1]
+                ax_r = axes[i]
+
+                ax_l.plot(
+                    (1 - d, 1 + d),
+                    (-d, +d),
+                    transform=ax_l.transAxes,
+                    **kwargs_break,
+                )
+                ax_l.plot(
+                    (1 - d, 1 + d),
+                    (1 - d, 1 + d),
+                    transform=ax_l.transAxes,
+                    **kwargs_break,
+                )
+
+                ax_r.plot(
+                    (-d, +d),
+                    (-d, +d),
+                    transform=ax_r.transAxes,
+                    **kwargs_break,
+                )
+                ax_r.plot(
+                    (-d, +d),
+                    (1 - d, 1 + d),
+                    transform=ax_r.transAxes,
+                    **kwargs_break,
+                )
+
+        fig.supxlabel(r"$q(x|\theta)$", y=0.18, fontsize=self.plot_settings.fontsize)
+
+
+        from matplotlib.transforms import ScaledTranslation
+
+        label_ax = ["A", "B"]
+
+        offset_x = -20  # pixels
+        offset_y = 5   # pixels
+
+        for i, ax in enumerate([ax_mag_list[0], ax_unit_list[0]]):
+
+            trans = ax.transAxes + ScaledTranslation(
+                offset_x / fig.dpi,
+                offset_y / fig.dpi,
+                fig.dpi_scale_trans
+            )
+
+            ax.text(
+                0, 1,
+                label_ax[i],
+                transform=trans,
+                fontsize=20,
+                fontweight="bold",
+                va="bottom",
+                ha="right",
+            )
+
+
+        fig.legend(
+            handles=handles,
+            labels=labels[:num_desc],
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.1),
+            ncol=min(num_desc, 4),
+            frameon=False,
+            fontsize=16,
+        )
+
+        fig.subplots_adjust(
+            left=0.08,
+            right=0.98,
+            bottom=0.22,
+            top=0.9,
+        )
+        fig.tight_layout()
+        return fig

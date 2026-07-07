@@ -47,11 +47,14 @@ def snapshot_loss_smoothness(
     descriptors: torch.Tensor,
     reduction: str = "none",
 ):
-    descriptors
-    if not descriptors.requires_grad:
-        descriptors.requires_grad_(True)
+    was_training = model_nnet.training
+    model_nnet.eval()
+
+    descriptors = descriptors.detach().clone().requires_grad_(True)
+
     q_pred = model_nnet(descriptors)
     q = q_pred.view(-1, 1)
+
     grad = torch.autograd.grad(
         outputs=q,
         inputs=descriptors,
@@ -69,8 +72,8 @@ def snapshot_loss_smoothness(
         out = out.sum()
     elif reduction != "none":
         raise ValueError("reduction must be 'none', 'mean', or 'sum'")
-    model_nnet.zero_grad()
-
+    
+    model_nnet.train(was_training)
     return out.detach()
 
 
