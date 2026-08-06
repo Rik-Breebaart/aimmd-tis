@@ -158,7 +158,7 @@ class ModelAnalysisMixin:
             _, ax = plt.subplots(1, 1)
         ax.plot(
             edges[1:], plnp,
-            label=r"$p^{RPE}(q')\ln p^{\rm model}(q')$",
+            label=r"$I(q')$",
             color=color,
             linewidth=self.plot_settings.linewidth,
         )
@@ -645,6 +645,7 @@ class ModelAnalysisMixin:
         q_max: float = 18.0,
         descriptor_labels: Optional[Sequence[str]] = None,
         plot_error: bool = True,
+        selection_show: Optional[np.ndarray] = None,
         norm_factors: Optional[np.ndarray] = None,
         q_bins: Optional[np.ndarray] = None,
         absolute: bool = False,
@@ -703,12 +704,15 @@ class ModelAnalysisMixin:
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(12, 4))
 
+        if selection_show is None:
+            selection_show = list(range(num_desc))
         for dim, label in enumerate(labels):
-            y     = _smooth(data[:, dim])
-            y_err = _smooth(data_std[:, dim])
-            ax.plot(bin_centers, y, label=label, alpha=0.8, lw=2)
-            if plot_error:
-                ax.fill_between(bin_centers, y - y_err, y + y_err, alpha=0.2)
+            if dim in selection_show:
+                y     = _smooth(data[:, dim])
+                y_err = _smooth(data_std[:, dim])
+                ax.plot(bin_centers, y, label=label, alpha=0.8, lw=2)
+                if plot_error:
+                    ax.fill_between(bin_centers, y - y_err, y + y_err, alpha=0.2)
 
         ax.axhline(0, color="black", linewidth=1.5, alpha=0.7)
         ax.set_xlim([q_min, q_max])
@@ -732,6 +736,7 @@ class ModelAnalysisMixin:
         moving_avg: int = 1,
         q_smooth: float = 0.0,
         descriptor_labels: Optional[Sequence[str]] = None,
+        selection_show: Optional[np.ndarray] = None,
         plot_error: bool = True,
         norm_factors: Optional[np.ndarray] = None,
         q_bins: Optional[np.ndarray] = None,
@@ -840,22 +845,25 @@ class ModelAnalysisMixin:
             return self._moving_average(arr1d, moving_avg)
 
         num_desc = unit_from_mean.shape[1]
+        if selection_show is None:
+            selection_show = list(range(num_desc))
         for dim in range(num_desc):
-            label = labels[dim] if dim < len(labels) else f"d{dim}"
-            y     = _smooth(unit_from_mean[:, dim])
-            y_err = _smooth(unit_std[:, dim])
+            if dim in selection_show:
+                label = labels[dim] if dim < len(labels) else f"d{dim}"
+                y     = _smooth(unit_from_mean[:, dim])
+                y_err = _smooth(unit_std[:, dim])
 
-            for i, ax in enumerate(ax_list):
-                q_start, q_end = q_ranges[i], q_ranges[i + 1]
-                ax.plot(bin_centers, y, label=label, linewidth=2)
-                ax.axhline(0, color="black", linewidth=1, alpha=0.8)
-                if plot_error:
-                    ax.fill_between(bin_centers, y - y_err, y + y_err, alpha=0.2)
-                ax.set_xlim(q_start, q_end)
-                spacing = q_spacing[i] if i < len(q_spacing) else 5
-                ax.set_xticks(np.arange(q_start, q_end + 1e-9, spacing))
-                ax.tick_params(axis="x", labelrotation=0, labelsize=9)
-                ax.grid(True, which="major", linestyle="--", alpha=0.5)
+                for i, ax in enumerate(ax_list):
+                    q_start, q_end = q_ranges[i], q_ranges[i + 1]
+                    ax.plot(bin_centers, y, label=label, linewidth=2)
+                    ax.axhline(0, color="black", linewidth=1, alpha=0.8)
+                    if plot_error:
+                        ax.fill_between(bin_centers, y - y_err, y + y_err, alpha=0.2)
+                    ax.set_xlim(q_start, q_end)
+                    spacing = q_spacing[i] if i < len(q_spacing) else 5
+                    ax.set_xticks(np.arange(q_start, q_end + 1e-9, spacing))
+                    ax.tick_params(axis="x", labelrotation=0, labelsize=9)
+                    ax.grid(True, which="major", linestyle="--", alpha=0.5)
 
         # Axis-break indicators
         d = 0.012
@@ -888,6 +896,7 @@ class ModelAnalysisMixin:
         q_smooth=0.0,
         descriptor_labels=None,
         plot_error=True,
+        selection_show=None,
         norm_factors=None,
         q_bins=None,
         figsize=(14, 10),
@@ -957,15 +966,20 @@ class ModelAnalysisMixin:
             spacing = q_spacing[i] if i < len(q_spacing) else 5
 
             for ax in (ax_mag, ax_unit):
+                ax.tick_params(axis="y", labelrotation=0, labelsize=12)
                 ax.set_xlim(q_start, q_end)
-                ax.set_xticks(np.arange(q_start, q_end + 1e-9, spacing))
+                if i == len(columns) - 1:
+                    ax.set_xticks(np.arange(q_start, q_end + 1e-9, spacing))
+                else:
+                    ax.set_xticks(np.arange(q_start, q_end , spacing))
+
                 ax.grid(True, which="major", linestyle="--", alpha=0.5)
 
             ax_mag.tick_params(labelbottom=False)
 
             ax_unit.set_ylim(-1, 1)
             ax_unit.axhline(0, color="black", linewidth=1, alpha=0.8)
-            ax_unit.tick_params(axis="x", labelrotation=0, labelsize=9)
+            ax_unit.tick_params(axis="x", labelrotation=0, labelsize=12)
 
             if i != 0:
                 for ax in (ax_mag, ax_unit):
@@ -997,8 +1011,11 @@ class ModelAnalysisMixin:
 
         handles = []
         num_desc = unit_from_mean.shape[1]
-
+        if selection_show is None:
+            selection_show = list(range(num_desc))
         for dim in range(num_desc):
+            if dim not in selection_show:
+                continue
             label = labels[dim] if dim < len(labels) else f"d{dim}"
             y = _smooth(unit_from_mean[:, dim])
             y_err = _smooth(unit_std[:, dim])
@@ -1056,15 +1073,15 @@ class ModelAnalysisMixin:
                     **kwargs_break,
                 )
 
-        fig.supxlabel(r"$q(x|\theta)$", y=0.18, fontsize=self.plot_settings.fontsize)
+        fig.supxlabel(r"$q(x|\theta)$", y=0.15, fontsize=self.plot_settings.fontsize)
 
 
         from matplotlib.transforms import ScaledTranslation
 
         label_ax = ["A", "B"]
 
-        offset_x = -20  # pixels
-        offset_y = 5   # pixels
+        offset_x = -50 # pixels
+        offset_y = 2   # pixels
 
         for i, ax in enumerate([ax_mag_list[0], ax_unit_list[0]]):
 
@@ -1089,10 +1106,10 @@ class ModelAnalysisMixin:
             handles=handles,
             labels=labels[:num_desc],
             loc="lower center",
-            bbox_to_anchor=(0.5, 0.1),
-            ncol=min(num_desc, 4),
+            bbox_to_anchor=(0.5, 0),
+            ncol=min(num_desc, 3),
             frameon=False,
-            fontsize=16,
+            fontsize=20
         )
 
         fig.subplots_adjust(
@@ -1102,4 +1119,6 @@ class ModelAnalysisMixin:
             top=0.9,
         )
         fig.tight_layout()
+        fig.align_ylabels()
+
         return fig

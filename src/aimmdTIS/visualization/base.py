@@ -405,26 +405,39 @@ class BaseVisualizer:
         ax.clabel(contour, inline=1, fontsize=self.plot_settings.fontsize * 0.6)
         return ax
 
-    def plot_q_heatmap(
+    def plot_q_slice_heatmap(
         self,
         model,
         ax: Optional[plt.Axes] = None,
+        n_bins_2d: int = 300,
+        descriptor_dims: Optional[Iterable[int]] = None,
+        v_min_max: Optional[Tuple[float, float]] = None,
+        cmap="Spectral",
+        logit=True,
         **kwargs,
     ) -> plt.Axes:
         """Plot q(x) as a heatmap."""
-        q, X, Y = self.compute_q_model_2d(model)
+        q, X, Y = self.compute_q_model_2d(model, n_bins_2d=n_bins_2d, descriptor_dims=descriptor_dims)
+        vmin, vmax = (v_min_max[0], v_min_max[1]) if v_min_max is not None else (-10, 10)
+        norm = matplotlib.colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+
         if ax is None:
             _, ax = plt.subplots(1, 1)
+        if not logit:
+            q = 1 / (1 + np.exp(-q))
+            norm = matplotlib.colors.Normalize(vmin=0, vmax=1)
         im = ax.imshow(
             q,
             origin="lower",
             extent=[X.min(), X.max(), Y.min(), Y.max()],
             aspect="auto",
+            cmap=cmap,
+            norm=norm,
             **kwargs,
         )
-        if ax.figure is not None:
-            ax.figure.colorbar(im, ax=ax)
-        return ax
+
+
+        return im
 
     def plot_rpe_distribution(
         self,
@@ -530,7 +543,7 @@ class BaseVisualizer:
         )
         return im
 
-    def plot_q_committor_from_shots(
+    def plot_shot_committor(
         self,
         descriptor_dims: Optional[Iterable[int]] = None,
         n_bins_2d: int | Tuple[int, int] = 100,
@@ -538,6 +551,7 @@ class BaseVisualizer:
         v_min_max: Optional[Tuple[float, float]] = None,
         cmap: str = "Spectral",
         smooth_sigma: Optional[float] = 0.0,
+        logit=True
     ):
         """Plot the data-estimated committor $q = \\ln(p_B/p_A)$ from shot results.
 
@@ -582,8 +596,11 @@ class BaseVisualizer:
         )
         mask = (H_B + H_A) > 0
         P_B = np.where(mask, H_B / (H_B + H_A), np.nan)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            q = np.where(mask, np.log(P_B / (1 - P_B)), np.nan)
+        if logit:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                q = np.where(mask, np.log(P_B / (1 - P_B)), np.nan)
+        else: 
+            q = P_B
         q = q.T  # (ny, nx) for imshow with origin='lower'
         if smooth_sigma is not None and smooth_sigma > 0:
             q = self.smooth_histogram(q, sigma=smooth_sigma)
@@ -839,6 +856,7 @@ class BaseVisualizer:
         smooth_sigma: Optional[float] = 1.5,
         clabel: bool = False,
         clabel_fontsize: int = 7,
+        logit=True
     ):
         """Contour lines of the data-estimated committor from shot results.
 
@@ -892,12 +910,16 @@ class BaseVisualizer:
             bins=[xedges, yedges], weights=self._w * n_A, density=False,
         )
         mask = (H_B + H_A) > 0
-        with np.errstate(divide="ignore", invalid="ignore"):
-            q = np.where(
-                mask,
-                np.log(np.where(H_B > 0, H_B, 1e-20)) - np.log(np.where(H_A > 0, H_A, 1e-20)),
-                np.nan,
-            )
+        P_B = np.where(mask, H_B / (H_B + H_A), np.nan)
+        if logit:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                q = np.where(
+                    mask,
+                    np.log(np.where(H_B > 0, H_B, 1e-20)) - np.log(np.where(H_A > 0, H_A, 1e-20)),
+                    np.nan,
+                )
+        else:
+            q = P_B
 
         q_plot = q.T  # (ny, nx) to match meshgrid convention
 
