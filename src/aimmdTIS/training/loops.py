@@ -468,14 +468,18 @@ def train_one_stage(
 
         model.nnet.train()
         if gates:
-            # Gates are active (noisy) from epoch 1 -- no bypass phase, so there
-            # is no dense->stochastic input-distribution jump. mu is clamped to
-            # [mu_min, 1], so it cannot run away during the penalty-free warmup.
-            # Sparsity penalty: 0 for epochs <= selection_start (warmup, lets the
-            # fit settle), then linear ramp to target over gate_ramp_epochs.
+            # Phase 1 (epoch <= gate_dense_epochs): gates bypassed -- the model
+            #   gets a clean fit so it can tell which descriptors actually
+            #   matter before any are gated/pruned.
+            # Phase 2 (.. <= selection_start): gates active (noisy), penalty 0 --
+            #   the model re-adapts to the gate noise.
+            # Phase 3 (.. <= selection_end): sparsity penalty ramps 0 -> target
+            #   and the per-epoch mu step selects.
+            # mu is clamped to [mu_min, 1] throughout, so it cannot run away.
+            dense_phase = epoch <= int(gate_dense_epochs)
             for gate in gates:
-                gate.bypass = False
-                gate.mu.requires_grad_(True)
+                gate.bypass = dense_phase
+                gate.mu.requires_grad_(not dense_phase)
             if epoch <= selection_start:
                 gate_fraction = 0.0
             elif gate_ramp_epochs > 0:
@@ -689,9 +693,16 @@ def train_one_stage(
             train_losses["total_loss"] - train_losses["stochastic_gate_regularization"]
         )
 
-        # Recovery checkpoint: track the best gate-penalty-free validation loss
-        # every epoch (including the gate dense/noise/ramp phases) so nan_rescue
-        # and the train-explosion guard always have a state to fall back to.
+        # Recovery checkpoint: best gate-penalty-free val loss, tracked every
+        # epoch so nan_rescue / the train-explosion guard always have a state to
+        # fall back to. NOT used as the final model when gates are selecting --
+        # during the ramp the raw loss legitimately rises as features are
+        # pruned, so the best raw loss is the pre-selection (all-gates-open)
+        # state. It is reset once at stop_start so that after selection the
+        # checkpoint reflects the pruned model.
+        if epoch == stop_start:
+            best_recovery_val = np.inf
+            best_state = None
         if np.isfinite(current_val_raw) and current_val_raw < best_recovery_val:
             best_recovery_val = current_val_raw
             best_state = deepcopy(model.nnet.state_dict())
@@ -705,8 +716,10 @@ def train_one_stage(
             )
             aimmd_store.rcmodels[f"{stage_name}_model_best"] = model
 
-        if np.isfinite(current_train) and current_train < best_train_loss:
-            best_train_loss = current_train
+        if (epoch == stop_start) or (
+            np.isfinite(current_train) and current_train < best_train_loss
+        ):
+            best_train_loss = current_train if np.isfinite(current_train) else np.inf
 
         # EMA-smoothed early-stopping metric: only active from stop_start so the
         # gate dense/noise/ramp phases (where the loss legitimately rises) do not
@@ -732,7 +745,11 @@ def train_one_stage(
             else:
                 no_improve += 1
 
-        if epoch > warmup_epochs:
+        # During the gate ramp the raw loss rises by design (features are being
+        # pruned), so the plateau scheduler and the train-explosion guard would
+        # both misfire -- skip them there and resume once selection is done.
+        in_gate_ramp = bool(gates) and selection_start < epoch <= selection_end
+        if epoch > warmup_epochs and not in_gate_ramp:
             scheduler.step(current_val_raw)
         print(
             f"[{stage_name}] EMA_Test={current_val:.4e} BestEMA={best_loss:.4e} "
@@ -740,7 +757,8 @@ def train_one_stage(
         )
 
         if (
-            np.isfinite(current_train)
+            not in_gate_ramp
+            and np.isfinite(current_train)
             and np.isfinite(best_train_loss)
             and current_train > float(train_explosion_factor) * best_train_loss
         ):
