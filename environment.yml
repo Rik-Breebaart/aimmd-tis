@@ -39,3 +39,6 @@ dependencies:
   - black
   - flake8
   - mypy
+
+  # core software dependencies
+  - aimmd

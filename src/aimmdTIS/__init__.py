@@ -3,6 +3,8 @@
 # Importing modules within the package
 
 from .TIS_AIMMD_setup import AIMMD_TIS
+from .rcmodel import TIS_EEScalePytorchRCModel, register_legacy_aimmd_alias
+from .stochastic_gates import StochasticGates
 from .TIS_Analysis import Create_Stable_trainset, Crossing_Probability_and_weights, RPE_toy, DataStore, InterfaceData
 from .Tools import train_function, read_config, create_train_test_split, SyntheticDataGenerator, print_config, save_fig_pdf_and_png, create_discrete_cmap
 from .fokker_plank_solver import interpolate, solve_committor_by_relaxation
@@ -40,3 +42,5 @@ from .diagnostics import (
 pretraining_train_function = train_one_stage
 combined_train_function = train_one_stage
 combined_train_function_l1_regularized = train_one_stage
+
+register_legacy_aimmd_alias()

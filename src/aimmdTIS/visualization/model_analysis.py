@@ -320,36 +320,84 @@ class ModelAnalysisMixin:
         variance = np.average((values - mean) ** 2, weights=weights, axis=axis)
         return mean, np.sqrt(variance)
 
+    # def _compute_gradients_raw(
+    #     self,
+    #     model,
+    #     descriptors: np.ndarray,
+    # ) -> np.ndarray:
+    #     """Backprop through *model.nnet* for *descriptors* and return gradients.
+
+    #     Parameters
+    #     ----------
+    #     model
+    #         AIMMD RCModel with a ``.nnet`` attribute.
+    #     descriptors
+    #         Array of shape ``(N, D)`` in **scaled** (model-input) space.
+
+    #     Returns
+    #     -------
+    #     gradients : ndarray, shape (N, D)
+    #         ``d(output) / d(input)`` for each sample.
+    #     """
+    #     device = getattr(model, "_device", "cpu")
+    #     input_tensor = torch.tensor(
+    #         descriptors, requires_grad=True, device=device, dtype=torch.float32
+    #     )
+    #     model.nnet.eval()
+    #     output = model.nnet(input_tensor)
+    #     output.backward(torch.ones_like(output))
+    #     gradients = input_tensor.grad.detach().cpu().numpy()
+    #     model.nnet.zero_grad(set_to_none=True)
+    #     model.nnet.train()
+    #     return gradients
+
     def _compute_gradients_raw(
         self,
         model,
         descriptors: np.ndarray,
+        batch_size: int = 10_000,
     ) -> np.ndarray:
-        """Backprop through *model.nnet* for *descriptors* and return gradients.
+        """Return d(model output) / d(scaled input), evaluated in GPU-safe batches."""
+        device = torch.device(getattr(model, "_device", "cpu"))
+        n_samples, n_features = descriptors.shape
+        gradients = np.empty((n_samples, n_features), dtype=np.float32)
 
-        Parameters
-        ----------
-        model
-            AIMMD RCModel with a ``.nnet`` attribute.
-        descriptors
-            Array of shape ``(N, D)`` in **scaled** (model-input) space.
-
-        Returns
-        -------
-        gradients : ndarray, shape (N, D)
-            ``d(output) / d(input)`` for each sample.
-        """
-        device = getattr(model, "_device", "cpu")
-        input_tensor = torch.tensor(
-            descriptors, requires_grad=True, device=device, dtype=torch.float32
-        )
+        was_training = model.nnet.training
         model.nnet.eval()
-        output = model.nnet(input_tensor)
-        output.backward(torch.ones_like(output))
-        gradients = input_tensor.grad.detach().cpu().numpy()
-        model.nnet.zero_grad(set_to_none=True)
-        model.nnet.train()
+
+        try:
+            for start in range(0, n_samples, batch_size):
+                stop = min(start + batch_size, n_samples)
+
+                inputs = torch.as_tensor(
+                    descriptors[start:stop],
+                    dtype=torch.float32,
+                    device=device,
+                ).detach().requires_grad_(True)
+
+                outputs = model.nnet(inputs)
+
+                batch_gradients = torch.autograd.grad(
+                    outputs=outputs,
+                    inputs=inputs,
+                    grad_outputs=torch.ones_like(outputs),
+                    create_graph=False,
+                    retain_graph=False,
+                )[0]
+
+                gradients[start:stop] = batch_gradients.detach().cpu().numpy()
+
+                del inputs, outputs, batch_gradients
+                model.nnet.zero_grad(set_to_none=True)
+
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+
+        finally:
+            model.nnet.train(was_training)
+
         return gradients
+
 
     def compute_gradient_stats_per_q(
         self,
@@ -703,7 +751,7 @@ class ModelAnalysisMixin:
 
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(12, 4))
-
+        num_desc = self._desc.shape[1]
         if selection_show is None:
             selection_show = list(range(num_desc))
         for dim, label in enumerate(labels):

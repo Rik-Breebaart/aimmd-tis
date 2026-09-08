@@ -26,7 +26,6 @@ def _set_lr(optimizer, lr: float):
     for group in optimizer.param_groups:
         group["lr"] = float(lr)
 
-
 def _make_optimizer(opt_cfg: Dict[str, Any], params):
     typ = opt_cfg.get("type", "Adamw").lower()
     lr = float(opt_cfg.get("lr", 1e-4))
@@ -152,12 +151,13 @@ def epoch_projected_gradient_contributions(
     batch_size: int,
     max_batches: int = 2,
     normalization: bool = True,
+    weighted_smoothness: bool = False,
 ):
     """Estimate projected per-term gradient contributions on sampled batches.
 
     For each sampled batch this computes:
     C_i = (g_i dot g_total) / ||g_total||^2,
-    where i in {model, smoothness, l1}.
+    where i in {model, smoothness, l1, gate}.
     """
     max_batches = int(max_batches)
     if max_batches <= 0:
@@ -166,6 +166,7 @@ def epoch_projected_gradient_contributions(
             "proj_model_mean": np.nan,
             "proj_smooth_mean": np.nan,
             "proj_l1_mean": np.nan,
+            "proj_gate_mean": np.nan,
             "proj_sum_mean": np.nan,
             "total_grad_l2_mean": np.nan,
         }
@@ -177,6 +178,7 @@ def epoch_projected_gradient_contributions(
             "proj_model_mean": np.nan,
             "proj_smooth_mean": np.nan,
             "proj_l1_mean": np.nan,
+            "proj_gate_mean": np.nan,
             "proj_sum_mean": np.nan,
             "total_grad_l2_mean": np.nan,
         }
@@ -184,6 +186,7 @@ def epoch_projected_gradient_contributions(
     proj_model = []
     proj_smooth = []
     proj_l1 = []
+    proj_gate = []
     total_grad_l2 = []
 
     smooth_w = float(model.ee_params.get("smoothness_penalty_weight", 0.0) or 0.0)
@@ -230,14 +233,27 @@ def epoch_projected_gradient_contributions(
                     create_graph=True,
                     retain_graph=True,
                 )[0]
-                smoothness_loss = (torch.abs(q_grad) ** 2).mean()
+                grad_sq = q_grad.square().sum(-1)
+                if weighted_smoothness:
+                    weights64 = targ[Properties.weights].to(torch.float64)
+                    counts64 = targ[Properties.shot_results].sum(-1).to(torch.float64)
+                    smooth_raw = (grad_sq.to(torch.float64) * weights64 * counts64).sum().to(model_term.dtype)
+                    smoothness_loss = smooth_raw / batch_norm if normalization else smooth_raw
+                else:
+                    mass_scale = (
+                        effective_mass_full_mean.to(grad_sq.dtype) if normalization else 1.0
+                    )
+                    smoothness_loss = grad_sq.mean() * mass_scale
                 smooth_term = smooth_w * smoothness_loss
 
             l1_term = model_term.new_zeros(())
             if l1_w != 0.0:
-                l1_term = l1_w * sum(p.abs().sum() for p in params)
+                l1_term = l1_w * sum(
+                    p.abs().sum() for p in model._network_parameters_without_gates()
+                )
 
-            total_term = model_term + smooth_term + l1_term
+            gate_term, _ = model._gate_regularization(model_term)
+            total_term = model_term + smooth_term + l1_term + gate_term
 
             g_model = torch.autograd.grad(model_term, params, retain_graph=True, allow_unused=True)
             if smooth_w != 0.0:
@@ -248,11 +264,16 @@ def epoch_projected_gradient_contributions(
                 g_l1 = torch.autograd.grad(l1_term, params, retain_graph=True, allow_unused=True)
             else:
                 g_l1 = [None] * len(params)
+            if gate_term.requires_grad:
+                g_gate = torch.autograd.grad(gate_term, params, retain_graph=True, allow_unused=True)
+            else:
+                g_gate = [None] * len(params)
             g_total = torch.autograd.grad(total_term, params, retain_graph=False, allow_unused=True)
 
             v_model = _flatten_grads_like_params(g_model, params)
             v_smooth = _flatten_grads_like_params(g_smooth, params)
             v_l1 = _flatten_grads_like_params(g_l1, params)
+            v_gate = _flatten_grads_like_params(g_gate, params)
             v_total = _flatten_grads_like_params(g_total, params)
 
             if v_total is None:
@@ -265,6 +286,7 @@ def epoch_projected_gradient_contributions(
             proj_model.append(float(torch.dot(v_model, v_total).item()) / denom)
             proj_smooth.append(float(torch.dot(v_smooth, v_total).item()) / denom)
             proj_l1.append(float(torch.dot(v_l1, v_total).item()) / denom)
+            proj_gate.append(float(torch.dot(v_gate, v_total).item()) / denom)
             total_grad_l2.append(float(np.sqrt(denom)))
     finally:
         if was_training:
@@ -277,6 +299,7 @@ def epoch_projected_gradient_contributions(
             "proj_model_mean": np.nan,
             "proj_smooth_mean": np.nan,
             "proj_l1_mean": np.nan,
+            "proj_gate_mean": np.nan,
             "proj_sum_mean": np.nan,
             "total_grad_l2_mean": np.nan,
         }
@@ -284,12 +307,14 @@ def epoch_projected_gradient_contributions(
     proj_model_mean = float(np.mean(proj_model))
     proj_smooth_mean = float(np.mean(proj_smooth))
     proj_l1_mean = float(np.mean(proj_l1))
+    proj_gate_mean = float(np.mean(proj_gate))
     return {
         "sampled_batches": sampled,
         "proj_model_mean": proj_model_mean,
         "proj_smooth_mean": proj_smooth_mean,
         "proj_l1_mean": proj_l1_mean,
-        "proj_sum_mean": float(proj_model_mean + proj_smooth_mean + proj_l1_mean),
+        "proj_gate_mean": proj_gate_mean,
+        "proj_sum_mean": float(proj_model_mean + proj_smooth_mean + proj_l1_mean + proj_gate_mean),
         "total_grad_l2_mean": float(np.mean(total_grad_l2)),
     }
 
@@ -301,16 +326,19 @@ def _apply_stage_hparams(model, stage_cfg: Dict[str, Any], ee_params: Optional[D
             stage_cfg.get("smoothness_penalty_weight", ee_params.get("smoothness_penalty_weight", 0.0))
         )
         l1 = float(stage_cfg.get("l1_regularization", ee_params.get("l1_regularization", 0.0)))
+        gate = float(stage_cfg.get("stochastic_gate_regularization", ee_params.get("stochastic_gate_regularization", 0.0)))
         clip = stage_cfg.get("max_clipping_norm", ee_params.get("max_clipping_norm", None))
     else:
         smoothness = float(
             stage_cfg.get("smoothness_penalty_weight", model.ee_params.get("smoothness_penalty_weight", 0.0))
         )
         l1 = float(stage_cfg.get("l1_regularization", model.ee_params.get("l1_regularization", 0.0)))
+        gate = float(stage_cfg.get("stochastic_gate_regularization", model.ee_params.get("stochastic_gate_regularization", 0.0)))
         clip = stage_cfg.get("max_clipping_norm", model.ee_params.get("max_clipping_norm", None))
 
     model.ee_params["smoothness_penalty_weight"] = smoothness
     model.ee_params["l1_regularization"] = l1
+    model.ee_params["stochastic_gate_regularization"] = gate
     model.ee_params["max_clipping_norm"] = None if clip is None else float(clip)
     return model
 
@@ -345,17 +373,49 @@ def train_one_stage(
     ema_beta: float = 0.5,
     min_delta: float = 1e-4,
     early_stop_start_epoch: int = 20,
-    train_explosion_factor: float = 2.0
+    train_explosion_factor: float = 2.0,
+    gate_dense_epochs: int = 50,
+    gate_noise_epochs: int = 20,
+    gate_ramp_epochs: int = 100,
 ):
     """Training loop for AIMMD-TIS committor model stages."""
-    model.optimizer = _make_optimizer({**optimizer_cfg, "lr": base_lr}, model.nnet.parameters())
-    scheduler = ReduceLROnPlateau(
-        model.optimizer,
-        mode="min",
-        patience=int(plateau_patience),
-        factor=float(plateau_factor),
-        min_lr=float(min_lr),
+    def build_optimizer_and_scheduler(lr):
+        # Single param group over the whole net (gate logits included). aimmd
+        # storage cannot round-trip a model whose optimizer has multiple param
+        # groups, so the gate logits instead get their extra learning rate from
+        # a manual sign-SGD nudge in train_epoch_smoothness.
+        optimizer = _make_optimizer(
+            {**optimizer_cfg, "lr": lr},
+            model.nnet.parameters(),
+        )
+        _set_lr(optimizer, lr)
+        scheduler = ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            patience=int(plateau_patience),
+            factor=float(plateau_factor),
+            min_lr=float(min_lr),
+        )
+        return optimizer, scheduler
+
+    model.optimizer, scheduler = build_optimizer_and_scheduler(base_lr)
+    gates = model._stochastic_gates()
+    if gates:
+        model.ee_params.setdefault("stochastic_gate_lr", 10.0)
+        model.ee_params.setdefault("stochastic_gate_step_cap", 0.15)
+    for gate in gates:
+        gate.bypass = False
+        gate.clamp_mu()
+    target_gate_reg = float(model.ee_params.get("stochastic_gate_regularization", 0.0))
+    selection_start = int(gate_dense_epochs) + int(gate_noise_epochs)
+    selection_end = selection_start + int(gate_ramp_epochs)
+    stop_start = max(
+        int(early_stop_start_epoch),
+        int(warmup_epochs) + 1,
+        selection_end + 1 if gates else 1,
     )
+    if int(epochs) < stop_start:
+        raise ValueError(f"epochs ({epochs}) must be at least stop_start ({stop_start})")
 
     train_total = []
     test_total = []
@@ -365,6 +425,10 @@ def train_one_stage(
     test_smooth = []
     train_l1 = []
     test_l1 = []
+    train_gate = []
+    test_gate = []
+    train_expected_active_features = []
+    test_expected_active_features = []
     train_smooth_model_ratio = []
     test_smooth_model_ratio = []
     train_smooth_total_frac = []
@@ -383,23 +447,42 @@ def train_one_stage(
     grad_proj_model = []
     grad_proj_smooth = []
     grad_proj_l1 = []
+    grad_proj_gate = []
     grad_proj_sum = []
     grad_total_l2 = []
 
     best_loss = np.inf
     best_state = None
+    best_recovery_val = np.inf
     no_improve = 0
     ema_val = None
     best_train_loss = np.inf
-
     ee_params_init = deepcopy(model.ee_params)
 
     for epoch in range(1, int(epochs) + 1):
         if warmup_epochs > 0 and epoch <= warmup_epochs:
-            lr_now = warmup_init + (base_lr - warmup_init) * (epoch / warmup_epochs)
+            lr_now = warmup_init + (
+                base_lr - warmup_init
+            ) * (epoch / warmup_epochs)
             _set_lr(model.optimizer, lr_now)
-        else:
-            _set_lr(model.optimizer, base_lr)
+
+        model.nnet.train()
+        if gates:
+            # Gates are active (noisy) from epoch 1 -- no bypass phase, so there
+            # is no dense->stochastic input-distribution jump. mu is clamped to
+            # [mu_min, 1], so it cannot run away during the penalty-free warmup.
+            # Sparsity penalty: 0 for epochs <= selection_start (warmup, lets the
+            # fit settle), then linear ramp to target over gate_ramp_epochs.
+            for gate in gates:
+                gate.bypass = False
+                gate.mu.requires_grad_(True)
+            if epoch <= selection_start:
+                gate_fraction = 0.0
+            elif gate_ramp_epochs > 0:
+                gate_fraction = min(1.0, (epoch - selection_start) / gate_ramp_epochs)
+            else:
+                gate_fraction = 1.0
+            model.ee_params["stochastic_gate_regularization"] = target_gate_reg * gate_fraction
 
         if clip_warmup_epochs > 0 and epoch <= clip_warmup_epochs:
             clipping = clip_init
@@ -408,7 +491,6 @@ def train_one_stage(
         model.ee_params["max_clipping_norm"] = clipping
         
 
-        
         _ = model.train_epoch_smoothness(
             trainset,
             batch_size=batch_size,
@@ -435,12 +517,15 @@ def train_one_stage(
             not np.isfinite(train_losses["total_loss"]) or not np.isfinite(test_losses["total_loss"])
         ):
             print(f"[{stage_name}] NaN/Inf at epoch {epoch}. Restoring best state and reducing LR.")
-            if best_state is not None:
-                model.nnet.load_state_dict(best_state)
-                for param in model.nnet.parameters():
-                    param.grad = None
+            if best_state is None:
+                raise FloatingPointError(
+                    "Nonfinite loss before a valid recovery checkpoint exists."
+                )
+            model.nnet.load_state_dict(best_state)
+            for param in model.nnet.parameters():
+                param.grad = None
             base_lr = max(float(min_lr), float(base_lr) * float(rescue_shrink))
-            model.optimizer = _make_optimizer({**optimizer_cfg, "lr": base_lr}, model.nnet.parameters())
+            model.optimizer, scheduler = build_optimizer_and_scheduler(base_lr)
             no_improve += 1
             continue
 
@@ -452,6 +537,10 @@ def train_one_stage(
         test_smooth.append(test_losses.get("smoothness_loss", np.nan))
         train_l1.append(train_losses.get("l1_regularization", np.nan))
         test_l1.append(test_losses.get("l1_regularization", np.nan))
+        train_gate.append(train_losses.get("stochastic_gate_regularization", np.nan))
+        test_gate.append(test_losses.get("stochastic_gate_regularization", np.nan))
+        train_expected_active_features.append(train_losses.get("expected_active_features", np.nan))
+        test_expected_active_features.append(test_losses.get("expected_active_features", np.nan))
         train_smooth_model_ratio.append(
             train_smooth[-1] / train_model[-1]
             if np.isfinite(train_model[-1]) and train_model[-1] != 0.0
@@ -514,18 +603,22 @@ def train_one_stage(
                     trainset=trainset,
                     batch_size=batch_size,
                     max_batches=min(int(grad_diag_max_batches), int(diag_max_batches)),
-                    normalization=normalization
+                    normalization=normalization,
+                    weighted_smoothness=weighted_smoothness,
                 )
                 grad_proj_sampled_batches.append(grad_diag["sampled_batches"])
                 grad_proj_model.append(grad_diag["proj_model_mean"])
                 grad_proj_smooth.append(grad_diag["proj_smooth_mean"])
                 grad_proj_l1.append(grad_diag["proj_l1_mean"])
+                grad_proj_gate.append(grad_diag["proj_gate_mean"])
                 grad_proj_sum.append(grad_diag["proj_sum_mean"])
                 grad_total_l2.append(grad_diag["total_grad_l2_mean"])
 
         print(
             f"[{stage_name}] Epoch {epoch}/{epochs} | "
             f"Train={train_total[-1]:.4e} Test={test_total[-1]:.4e} "
+            f"PredictiveTrain={train_model[-1] + train_smooth[-1] + train_l1[-1]:.4e} "
+            f"PredictiveTest={test_model[-1] + test_smooth[-1] + test_l1[-1]:.4e} "
             f"LR={lr_log[-1]:.2e} Batch={batch_size}"
         )
         if diagnostics:
@@ -559,9 +652,29 @@ def train_one_stage(
                     f"Model={grad_proj_model[-1]:.4e} "
                     f"Smooth={grad_proj_smooth[-1]:.4e} "
                     f"L1={grad_proj_l1[-1]:.4e} "
+                    f"Gate={grad_proj_gate[-1]:.4e} "
                     f"Sum={grad_proj_sum[-1]:.4e} "
                     f"TotalGradL2={grad_total_l2[-1]:.4e} "
                     f"Sampled={grad_proj_sampled_batches[-1]}"
+                )
+            if gates:
+                saturated, total_gate_features = model.gate_saturation_stats()
+                with torch.no_grad():
+                    probs = torch.cat([
+                        g.expected_gate_probabilities().detach().flatten() for g in gates
+                    ])
+                    mu_all = torch.cat([g.mu.detach().flatten() for g in gates])
+                eaf = float(probs.sum())
+                n_on = int((probs > 0.5).sum())
+                print(
+                    f"[{stage_name}] Gate epoch {epoch} | "
+                    f"reg={model.ee_params.get('stochastic_gate_regularization', 0.0):.3e} "
+                    f"EAF={eaf:.2f} on(>0.5)={n_on}/{probs.numel()} "
+                    f"mu[min/med/max]={float(mu_all.min()):.2f}/"
+                    f"{float(mu_all.median()):.2f}/{float(mu_all.max()):.2f} "
+                    f"boost={float(model.ee_params.get('stochastic_gate_lr', 0.0)):.3g} "
+                    f"cap={float(model.ee_params.get('stochastic_gate_step_cap', 0.0)):.3g} "
+                    f"saturated={saturated}/{total_gate_features}"
                 )
         aimmd_store.rcmodels[f"{stage_name}_state_dict_most_recent"] = TorchRCModelLite(
             model.nnet.state_dict(),
@@ -569,44 +682,58 @@ def train_one_stage(
         )
         aimmd_store.rcmodels[f"{stage_name}_model_most_recent"] = model
 
-        current_val_raw = float(test_losses["total_loss"])
-        current_train = float(train_losses["total_loss"])
+        current_val_raw = float(
+            test_losses["total_loss"] - test_losses["stochastic_gate_regularization"]
+        )
+        current_train = float(
+            train_losses["total_loss"] - train_losses["stochastic_gate_regularization"]
+        )
 
-        if epoch >= early_stop_start_epoch:
-            if ema_val is None:
-                ema_val = current_val_raw
-            else:
-                ema_val = float(ema_beta) * ema_val + (1.0 - float(ema_beta)) * current_val_raw
-            current_val = ema_val
-        else:
-            print(f"[{stage_name}] Early stopping not active until epoch {early_stop_start_epoch}.")
-            current_val = current_val_raw
-
-        if current_train < best_train_loss:
-            best_train_loss = current_train
-        
-
-        improved = current_val < best_loss - float(min_delta)
-
-        if improved:
-            best_loss = current_val
+        # Recovery checkpoint: track the best gate-penalty-free validation loss
+        # every epoch (including the gate dense/noise/ramp phases) so nan_rescue
+        # and the train-explosion guard always have a state to fall back to.
+        if np.isfinite(current_val_raw) and current_val_raw < best_recovery_val:
+            best_recovery_val = current_val_raw
             best_state = deepcopy(model.nnet.state_dict())
-            no_improve = 0
             aimmd_store.rcmodels[f"{stage_name}_state_dict_best"] = TorchRCModelLite(
                 best_state,
                 meta={
                     "epoch": epoch,
-                    "val_loss_ema": best_loss,
                     "val_loss_raw": current_val_raw,
                     "train_loss": current_train,
                 },
             )
             aimmd_store.rcmodels[f"{stage_name}_model_best"] = model
 
-        else:
-            no_improve += 1
+        if np.isfinite(current_train) and current_train < best_train_loss:
+            best_train_loss = current_train
 
-        scheduler.step(current_val_raw)
+        # EMA-smoothed early-stopping metric: only active from stop_start so the
+        # gate dense/noise/ramp phases (where the loss legitimately rises) do not
+        # trip early stopping.
+        if epoch < stop_start:
+            current_val = current_val_raw
+            no_improve = 0
+        else:
+            if epoch == stop_start:
+                ema_val = None
+                best_loss = np.inf
+                no_improve = 0
+            ema_val = (
+                current_val_raw
+                if ema_val is None
+                else float(ema_beta) * ema_val + (1.0 - float(ema_beta)) * current_val_raw
+            )
+            current_val = ema_val
+            improved = current_val < best_loss - float(min_delta)
+            if improved:
+                best_loss = current_val
+                no_improve = 0
+            else:
+                no_improve += 1
+
+        if epoch > warmup_epochs:
+            scheduler.step(current_val_raw)
         print(
             f"[{stage_name}] EMA_Test={current_val:.4e} BestEMA={best_loss:.4e} "
             f"NoImprove={no_improve}/{early_stop_patience} "
@@ -624,7 +751,7 @@ def train_one_stage(
             )
             break
 
-        if no_improve >= int(early_stop_patience):
+        if epoch >= stop_start and no_improve >= int(early_stop_patience):
             print(
                 f"[{stage_name}] Early stopping at epoch {epoch} "
                 f"(patience {early_stop_patience}, best EMA val={best_loss:.4e})."
@@ -636,6 +763,15 @@ def train_one_stage(
             param.grad = None
         aimmd_store.rcmodels[f"most_recent"] = model
 
+    n_epochs_recorded = len(train_total)
+    if len(grad_proj_sum) != n_epochs_recorded:
+        grad_proj_sampled_batches = [np.nan] * n_epochs_recorded
+        grad_proj_model = [np.nan] * n_epochs_recorded
+        grad_proj_smooth = [np.nan] * n_epochs_recorded
+        grad_proj_l1 = [np.nan] * n_epochs_recorded
+        grad_proj_gate = [np.nan] * n_epochs_recorded
+        grad_proj_sum = [np.nan] * n_epochs_recorded
+        grad_total_l2 = [np.nan] * n_epochs_recorded
 
     return {
         "train_total": train_total,
@@ -646,6 +782,10 @@ def train_one_stage(
         "test_smooth": test_smooth,
         "train_l1": train_l1,
         "test_l1": test_l1,
+        "train_gate": train_gate,
+        "test_gate": test_gate,
+        "train_expected_active_features": train_expected_active_features,
+        "test_expected_active_features": test_expected_active_features,
         "train_smooth_model_ratio": train_smooth_model_ratio,
         "test_smooth_model_ratio": test_smooth_model_ratio,
         "train_smooth_total_frac": train_smooth_total_frac,
@@ -664,7 +804,8 @@ def train_one_stage(
         "diag_grad_proj_model": grad_proj_model,
         "diag_grad_proj_smooth": grad_proj_smooth,
         "diag_grad_proj_l1": grad_proj_l1,
+        "diag_grad_proj_gate": grad_proj_gate,
         "diag_grad_proj_sum": grad_proj_sum,
         "diag_grad_total_l2": grad_total_l2,
-        "best_val": best_loss,
+        "best_val": best_loss if np.isfinite(best_loss) else best_recovery_val,
     }

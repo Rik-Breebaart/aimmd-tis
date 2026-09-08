@@ -14,6 +14,9 @@ import torch
 import torch.nn as nn
 import aimmd
 
+from .rcmodel import TIS_EEScalePytorchRCModel
+from .stochastic_gates import StochasticGates
+
 
 class AIMMDSetup:
     """
@@ -122,7 +125,24 @@ class AIMMDSetup:
 
         n_unit_layers = [self.descriptor_dim] + hidden_layers
 
+        gate_settings = self.AIMMD_settings.get("stochastic_gates", False)
+        if isinstance(gate_settings, dict):
+            use_stochastic_gates = bool(gate_settings.get("enabled", True))
+        else:
+            use_stochastic_gates = bool(gate_settings)
+            gate_settings = {}
+        use_stochastic_gates = bool(
+            self.AIMMD_settings.get("use_stochastic_gates", use_stochastic_gates)
+        )
+
         modules = []
+        if use_stochastic_gates:
+            modules.append(StochasticGates(
+                n_in=self.descriptor_dim,
+                sigma=gate_settings.get("sigma", 0.5),
+                init_mu=gate_settings.get("init_mu", 1.0),
+                mu_min=gate_settings.get("mu_min", None),
+            ))
         for i in range(len(hidden_layers)):
             activation = self.__select_activation(in_features=n_unit_layers[i + 1])
             modules += [
@@ -180,7 +200,7 @@ class AIMMDSetup:
 
         Returns
         -------
-        aimmd.pytorch.TIS_EEScalePytorchRCModel
+        aimmdTIS.rcmodel.TIS_EEScalePytorchRCModel
             Configured RC model.
         """
         trainset = None
@@ -215,7 +235,7 @@ class AIMMDSetup:
         if self.descriptor_transform is None:
             self.descriptor_transform = self.__setup_descriptor_transform()
 
-        model = aimmd.pytorch.TIS_EEScalePytorchRCModel(
+        model = TIS_EEScalePytorchRCModel(
             nnet=torch_model,
             optimizer=optimizer,
             states=self.states,
@@ -245,7 +265,7 @@ class AIMMDSetup:
 
         Returns
         -------
-        aimmd.pytorch.TIS_EEScalePytorchRCModel
+        aimmdTIS.rcmodel.TIS_EEScalePytorchRCModel
             Loaded RC model.
         """
         aimmd_store = aimmd.Storage(aimmd_storage, mode)
@@ -271,7 +291,7 @@ class AIMMDSetup:
 
         Parameters
         ----------
-        RCModel : aimmd.pytorch.TIS_EEScalePytorchRCModel
+        RCModel : aimmdTIS.rcmodel.TIS_EEScalePytorchRCModel
             Trained RC model.
 
         Returns

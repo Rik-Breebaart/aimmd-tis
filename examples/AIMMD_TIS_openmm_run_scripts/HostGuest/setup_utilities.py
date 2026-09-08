@@ -24,6 +24,7 @@ sys.path.append(parent_parent_directory)
 
 # Custom imports
 from aimmd import aimmd
+from aimmdTIS import TIS_EEScalePytorchRCModel
 import TIS_AIMMD_toy_framework as TAI
 from TIS_AIMMD_toy_framework import TIS_AIMMD_setup, read_config
 from examples.AIMMD_TIS_openmm_run_scripts.HostGuest.transform_functions import cv_hg_distance
@@ -280,7 +281,7 @@ class AIMMD_setup:
         if self.descriptor_transform is None:
             self.descriptor_transform = self.__setup_descriptor_transform()
 
-        model = aimmd.pytorch.TIS_EEScalePytorchRCModel(nnet=torch_model,
+        model = TIS_EEScalePytorchRCModel(nnet=torch_model,
                                                     optimizer=optimizer,
                                                     states=self.states,
                                                     ee_params=self.train_decision_params,
