@@ -417,7 +417,8 @@ class TIS_EEScalePytorchRCModelMixin:
         # rate here instead. The step keeps the true gradient magnitude (bounded
         # by gate_cap), so a feature whose model-fit gradient beats the small
         # constant sparsity gradient stays open while unused features close.
-        gate_modules = self._stochastic_gates()
+        # Frozen gates (fine-tune phase) are not stepped -- selection is done.
+        gate_modules = [g for g in self._stochastic_gates() if not getattr(g, "frozen", False)]
         gate_nudge = float(self.ee_params.get("stochastic_gate_lr", 10.0)) if gate_modules else 0.0
         gate_cap = float(self.ee_params.get("stochastic_gate_step_cap", 0.15))
         gate_grad_accum = {id(g): torch.zeros_like(g.mu) for g in gate_modules}

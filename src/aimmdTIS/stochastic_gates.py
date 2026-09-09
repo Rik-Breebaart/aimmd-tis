@@ -30,6 +30,9 @@ class StochasticGates(nn.Module):
         self.init_mu = float(min(max(init_mu, self.mu_min), self.mu_max))
         self.mu = nn.Parameter(torch.full((self.n_in,), self.init_mu))
         self.bypass = False
+        # When True, forward uses the deterministic gate (clamp(mu)) even in
+        # training mode -- for the clean fine-tune phase after selection.
+        self.frozen = False
         self.call_kwargs = {
             "n_in": self.n_in,
             "sigma": self.sigma,
@@ -42,9 +45,9 @@ class StochasticGates(nn.Module):
             raise ValueError(
                 f"Expected {self.n_in} descriptors, got {descriptors.shape[-1]}"
             )
-        if self.bypass:
+        if getattr(self, "bypass", False):
             return descriptors
-        if self.training:
+        if self.training and not getattr(self, "frozen", False):
             gates = self.mu + torch.randn_like(self.mu) * self.sigma
         else:
             gates = self.mu

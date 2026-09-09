@@ -405,8 +405,11 @@ def train_one_stage(
         model.ee_params.setdefault("stochastic_gate_step_cap", 0.15)
     for gate in gates:
         gate.bypass = False
+        gate.frozen = False
         gate.clamp_mu()
     target_gate_reg = float(model.ee_params.get("stochastic_gate_regularization", 0.0))
+    # gate_dense_epochs + gate_noise_epochs = penalty-free co-adaptation before
+    # the sparsity ramp (no bypass phase anymore).
     selection_start = int(gate_dense_epochs) + int(gate_noise_epochs)
     selection_end = selection_start + int(gate_ramp_epochs)
     stop_start = max(
@@ -457,6 +460,7 @@ def train_one_stage(
     no_improve = 0
     ema_val = None
     best_train_loss = np.inf
+    gate_finetune_started = False
     ee_params_init = deepcopy(model.ee_params)
 
     for epoch in range(1, int(epochs) + 1):
@@ -468,18 +472,21 @@ def train_one_stage(
 
         model.nnet.train()
         if gates:
-            # Phase 1 (epoch <= gate_dense_epochs): gates bypassed -- the model
-            #   gets a clean fit so it can tell which descriptors actually
-            #   matter before any are gated/pruned.
-            # Phase 2 (.. <= selection_start): gates active (noisy), penalty 0 --
-            #   the model re-adapts to the gate noise.
-            # Phase 3 (.. <= selection_end): sparsity penalty ramps 0 -> target
-            #   and the per-epoch mu step selects.
-            # mu is clamped to [mu_min, 1] throughout, so it cannot run away.
-            dense_phase = epoch <= int(gate_dense_epochs)
+            # Phase A (epoch <= selection_start): gates active + noisy, penalty 0.
+            #   The model co-adapts to the gates from the start (no bypass, so no
+            #   sharp transition in the loss curve).
+            # Phase B (.. <= selection_end): sparsity penalty ramps 0 -> target
+            #   and the per-epoch mu step prunes redundant descriptors.
+            # Phase C (>= stop_start): gates FROZEN (deterministic, no noise,
+            #   mu fixed) and the optimizer LR re-warmed -- a clean noise-free
+            #   fit of the network to the selected subset, so the final model is
+            #   actually converged and comparable across gate_reg values. Early
+            #   stopping runs here, on this clean signal.
+            frozen_phase = epoch >= stop_start
             for gate in gates:
-                gate.bypass = dense_phase
-                gate.mu.requires_grad_(not dense_phase)
+                gate.bypass = False
+                gate.frozen = frozen_phase
+                gate.mu.requires_grad_(not frozen_phase)
             if epoch <= selection_start:
                 gate_fraction = 0.0
             elif gate_ramp_epochs > 0:
@@ -487,6 +494,15 @@ def train_one_stage(
             else:
                 gate_fraction = 1.0
             model.ee_params["stochastic_gate_regularization"] = target_gate_reg * gate_fraction
+            if frozen_phase and not gate_finetune_started:
+                # Enter the clean fine-tune: reset the optimizer + LR schedule so
+                # the network can re-converge on the (now fixed) gated inputs.
+                gate_finetune_started = True
+                model.optimizer, scheduler = build_optimizer_and_scheduler(base_lr)
+                print(
+                    f"[{stage_name}] Gate fine-tune starts at epoch {epoch}: gates "
+                    f"frozen, LR reset to {base_lr:.2e}."
+                )
 
         if clip_warmup_epochs > 0 and epoch <= clip_warmup_epochs:
             clipping = clip_init
