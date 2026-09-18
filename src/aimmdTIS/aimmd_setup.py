@@ -137,11 +137,32 @@ class AIMMDSetup:
 
         modules = []
         if use_stochastic_gates:
+            gate_sigma = float(gate_settings.get("sigma", 0.5))
+            # Default init_mu is 0.0 (prob=0.5, the erf-gradient maximum) --
+            # a neutral start, not biased toward "open". Two prior defaults
+            # were tried and broke on real data: a fixed 1.0 put every gate
+            # on the erf-saturation plateau at small sigma (stg_pilot_v10:
+            # every run stuck at EAF=32.00, saturated=32/32, any gate_reg);
+            # 2*sigma escaped that but, combined with the old dense/ramp
+            # schedule's penalty-free warmup, let mu drift up and get
+            # trapped at the *other* boundary (mu_max=1.0) instead
+            # (stg_pilot_v11: on(>0.5)=30-31/32 identically across gate_reg
+            # 1..3 -- erf-saturated there too). With the sparsity penalty now
+            # constant from epoch 1 (no more warmup/ramp -- see loops.py),
+            # there is no unopposed window for mu to drift in before
+            # training even starts, so a neutral mu=0 is both simplest and
+            # safest. mu_max now scales with sigma (1+3*sigma, symmetric with
+            # mu_min=-3*sigma) rather than a fixed 1.0, so a fully-open gate
+            # has erf-saturation headroom regardless of sigma -- this doesn't
+            # change what a converged/kept gate reads as at inference, since
+            # deterministic_gate_values() = mu.clamp(0,1) independently
+            # clamps to a true pass-through regardless of mu_max.
             modules.append(StochasticGates(
                 n_in=self.descriptor_dim,
-                sigma=gate_settings.get("sigma", 0.5),
-                init_mu=gate_settings.get("init_mu", 1.0),
+                sigma=gate_sigma,
+                init_mu=gate_settings.get("init_mu", 0.0),
                 mu_min=gate_settings.get("mu_min", None),
+                clamp_mu=gate_settings.get("clamp_mu", True),
             ))
         for i in range(len(hidden_layers)):
             activation = self.__select_activation(in_features=n_unit_layers[i + 1])

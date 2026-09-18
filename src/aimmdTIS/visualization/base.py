@@ -6,6 +6,7 @@ provide a clean structure for adding future plotting methods.
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, Optional, Tuple
 
@@ -73,8 +74,17 @@ class BaseVisualizer:
 
         self.plot_settings = PlotSettings()
         self._cache: Dict[str, object] = {}
-        self._model_output_cache: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
-        self._gradient_output_cache: Dict[int, Dict[str, object]] = {}
+        # Keyed by the model object itself via a WeakKeyDictionary, not
+        # id(model): a plain int-keyed dict caused a real stale-cache bug --
+        # once a model object is garbage collected, CPython can (and in
+        # tight loops that create/discard many models routinely does) reuse
+        # its address for the next allocated object, so id(model) silently
+        # collides and a later, different model gets served a previous
+        # model's cached output. WeakKeyDictionary keys on actual object
+        # identity/liveness, so entries are dropped when their model is
+        # collected instead of aliasing.
+        self._model_output_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+        self._gradient_output_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
         self.RPE = None
         # Flat-array trainset (new interface, set via load_trainset)
         self._desc: Optional[np.ndarray] = None       # scaled space (model input)
@@ -156,9 +166,11 @@ class BaseVisualizer:
     def _model_output_rpe(self, model) -> Tuple[np.ndarray, np.ndarray]:
         """Return ``(p_B, q)`` for all stored RPE frames.
 
-        The result is cached by ``id(model)``.  Calling this method a second
-        time for the same model object is free; the forward pass is only run
-        once per (model, trainset) combination.
+        The result is cached against the model object itself (a
+        WeakKeyDictionary, safe against a freed model's id() being reused by
+        a later one). Calling this method a second time for the same model
+        object is free; the forward pass is only run once per
+        (model, trainset) combination.
 
         Returns
         -------
@@ -169,7 +181,7 @@ class BaseVisualizer:
         """
         if self._desc is None:
             raise ValueError("load_trainset() must be called before model evaluation.")
-        key = id(model)
+        key = model
         if key not in self._model_output_cache:
             desc_t = torch.as_tensor(self._desc)
             with torch.no_grad():

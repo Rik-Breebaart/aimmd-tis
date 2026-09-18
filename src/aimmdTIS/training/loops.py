@@ -374,16 +374,16 @@ def train_one_stage(
     min_delta: float = 1e-4,
     early_stop_start_epoch: int = 20,
     train_explosion_factor: float = 2.0,
-    gate_dense_epochs: int = 50,
-    gate_noise_epochs: int = 20,
-    gate_ramp_epochs: int = 100,
+    gate_freeze_min_epoch: int = 50,
+    gate_freeze_window: int = 30,
+    gate_freeze_max_epochs: int = 150,
 ):
     """Training loop for AIMMD-TIS committor model stages."""
     def build_optimizer_and_scheduler(lr):
-        # Single param group over the whole net (gate logits included). aimmd
-        # storage cannot round-trip a model whose optimizer has multiple param
-        # groups, so the gate logits instead get their extra learning rate from
-        # a manual sign-SGD nudge in train_epoch_smoothness.
+        # Single param group (gate logits included) -- aimmd storage cannot
+        # round-trip a model whose optimizer has multiple param groups; gate
+        # logits get an extra learning rate via a manual nudge instead (see
+        # train_epoch_smoothness).
         optimizer = _make_optimizer(
             {**optimizer_cfg, "lr": lr},
             model.nnet.parameters(),
@@ -401,22 +401,21 @@ def train_one_stage(
     model.optimizer, scheduler = build_optimizer_and_scheduler(base_lr)
     gates = model._stochastic_gates()
     if gates:
-        model.ee_params.setdefault("stochastic_gate_lr", 10.0)
-        model.ee_params.setdefault("stochastic_gate_step_cap", 0.15)
+        # Extra per-epoch nudge on the gate logits (mu), on top of the
+        # optimizer's own gradient step -- keeps selection on a timescale
+        # comparable to the model's own convergence (hundreds of epochs)
+        # rather than collapsing in tens.
+        model.ee_params.setdefault("stochastic_gate_lr", 2.0)
+        model.ee_params.setdefault("stochastic_gate_step_cap", 0.005)
     for gate in gates:
         gate.bypass = False
         gate.frozen = False
         gate.clamp_mu()
+    # Gates are active + noisy and the sparsity penalty is at its full target
+    # strength from epoch 1 (literal STG, Yamada et al. 2020) -- no warm-up
+    # schedule.
     target_gate_reg = float(model.ee_params.get("stochastic_gate_regularization", 0.0))
-    # gate_dense_epochs + gate_noise_epochs = penalty-free co-adaptation before
-    # the sparsity ramp (no bypass phase anymore).
-    selection_start = int(gate_dense_epochs) + int(gate_noise_epochs)
-    selection_end = selection_start + int(gate_ramp_epochs)
-    stop_start = max(
-        int(early_stop_start_epoch),
-        int(warmup_epochs) + 1,
-        selection_end + 1 if gates else 1,
-    )
+    stop_start = max(int(early_stop_start_epoch), int(warmup_epochs) + 1)
     if int(epochs) < stop_start:
         raise ValueError(f"epochs ({epochs}) must be at least stop_start ({stop_start})")
 
@@ -438,6 +437,10 @@ def train_one_stage(
     test_smooth_total_frac = []
     train_l1_total_frac = []
     test_l1_total_frac = []
+    train_gate_total_frac = []
+    test_gate_total_frac = []
+    train_model_total_frac = []
+    test_model_total_frac = []
     train_reg_total_frac = []
     test_reg_total_frac = []
     lr_log = []
@@ -460,8 +463,14 @@ def train_one_stage(
     no_improve = 0
     ema_val = None
     best_train_loss = np.inf
-    gate_finetune_started = False
     ee_params_init = deepcopy(model.ee_params)
+
+    # Once the discrete selected-feature count (probability > 0.5) has been
+    # unchanged for `gate_freeze_window` epochs (past `gate_freeze_min_epoch`),
+    # freeze the gates deterministically and fine-tune for at most
+    # `gate_freeze_max_epochs` more.
+    n_selected_history = []
+    gate_frozen_epoch = None
 
     for epoch in range(1, int(epochs) + 1):
         if warmup_epochs > 0 and epoch <= warmup_epochs:
@@ -472,37 +481,41 @@ def train_one_stage(
 
         model.nnet.train()
         if gates:
-            # Phase A (epoch <= selection_start): gates active + noisy, penalty 0.
-            #   The model co-adapts to the gates from the start (no bypass, so no
-            #   sharp transition in the loss curve).
-            # Phase B (.. <= selection_end): sparsity penalty ramps 0 -> target
-            #   and the per-epoch mu step prunes redundant descriptors.
-            # Phase C (>= stop_start): gates FROZEN (deterministic, no noise,
-            #   mu fixed) and the optimizer LR re-warmed -- a clean noise-free
-            #   fit of the network to the selected subset, so the final model is
-            #   actually converged and comparable across gate_reg values. Early
-            #   stopping runs here, on this clean signal.
-            frozen_phase = epoch >= stop_start
-            for gate in gates:
-                gate.bypass = False
-                gate.frozen = frozen_phase
-                gate.mu.requires_grad_(not frozen_phase)
-            if epoch <= selection_start:
-                gate_fraction = 0.0
-            elif gate_ramp_epochs > 0:
-                gate_fraction = min(1.0, (epoch - selection_start) / gate_ramp_epochs)
+            # Track the discrete selected-feature count to decide when to freeze.
+            with torch.no_grad():
+                probs_now = torch.cat([
+                    g.expected_gate_probabilities().detach().flatten() for g in gates
+                ])
+            n_selected_history.append(int((probs_now > 0.5).sum()))
+
+            if (
+                gate_frozen_epoch is None
+                and epoch >= int(gate_freeze_min_epoch)
+                and len(n_selected_history) >= int(gate_freeze_window)
+            ):
+                recent = n_selected_history[-int(gate_freeze_window):]
+                if len(set(recent)) == 1:
+                    gate_frozen_epoch = epoch
+                    print(
+                        f"[{stage_name}] Gate selection stabilized (selected "
+                        f"count constant at {recent[-1]} over last "
+                        f"{gate_freeze_window} epochs) -- freezing gates "
+                        f"deterministically at epoch {epoch}, fine-tune "
+                        f"capped at {gate_freeze_max_epochs} more epochs."
+                    )
+
+            if gate_frozen_epoch is not None:
+                # Gates deterministic, mu no longer trained -- selection is done.
+                for gate in gates:
+                    gate.bypass = False
+                    gate.frozen = True
+                    gate.mu.requires_grad_(False)
             else:
-                gate_fraction = 1.0
-            model.ee_params["stochastic_gate_regularization"] = target_gate_reg * gate_fraction
-            if frozen_phase and not gate_finetune_started:
-                # Enter the clean fine-tune: reset the optimizer + LR schedule so
-                # the network can re-converge on the (now fixed) gated inputs.
-                gate_finetune_started = True
-                model.optimizer, scheduler = build_optimizer_and_scheduler(base_lr)
-                print(
-                    f"[{stage_name}] Gate fine-tune starts at epoch {epoch}: gates "
-                    f"frozen, LR reset to {base_lr:.2e}."
-                )
+                for gate in gates:
+                    gate.bypass = False
+                    gate.frozen = False
+                    gate.mu.requires_grad_(True)
+            model.ee_params["stochastic_gate_regularization"] = target_gate_reg
 
         if clip_warmup_epochs > 0 and epoch <= clip_warmup_epochs:
             clipping = clip_init
@@ -591,14 +604,38 @@ def train_one_stage(
             if np.isfinite(test_total[-1]) and test_total[-1] != 0.0
             else np.nan
         )
+        train_gate_total_frac.append(
+            (train_gate[-1]) / train_total[-1]
+            if np.isfinite(train_total[-1]) and train_total[-1] != 0.0
+            else np.nan
+        )
+        test_gate_total_frac.append(
+            (test_gate[-1]) / test_total[-1]
+            if np.isfinite(test_total[-1]) and test_total[-1] != 0.0
+            else np.nan
+        )
+        train_model_total_frac.append(
+            (train_model[-1]) / train_total[-1]
+            if np.isfinite(train_total[-1]) and train_total[-1] != 0.0
+            else np.nan
+        )
+        test_model_total_frac.append(
+            (test_model[-1]) / test_total[-1]
+            if np.isfinite(test_total[-1]) and test_total[-1] != 0.0
+            else np.nan
+        )
         train_reg_total_frac.append(
-            train_smooth_total_frac[-1] + train_l1_total_frac[-1]
-            if np.isfinite(train_smooth_total_frac[-1]) and np.isfinite(train_l1_total_frac[-1])
+            train_smooth_total_frac[-1] + train_l1_total_frac[-1] + train_gate_total_frac[-1]
+            if np.isfinite(train_smooth_total_frac[-1])
+            and np.isfinite(train_l1_total_frac[-1])
+            and np.isfinite(train_gate_total_frac[-1])
             else np.nan
         )
         test_reg_total_frac.append(
-            test_smooth_total_frac[-1] + test_l1_total_frac[-1]
-            if np.isfinite(test_smooth_total_frac[-1]) and np.isfinite(test_l1_total_frac[-1])
+            test_smooth_total_frac[-1] + test_l1_total_frac[-1] + test_gate_total_frac[-1]
+            if np.isfinite(test_smooth_total_frac[-1])
+            and np.isfinite(test_l1_total_frac[-1])
+            and np.isfinite(test_gate_total_frac[-1])
             else np.nan
         )
         lr_log.append(model.optimizer.param_groups[0]["lr"])
@@ -634,9 +671,14 @@ def train_one_stage(
                 grad_proj_sum.append(grad_diag["proj_sum_mean"])
                 grad_total_l2.append(grad_diag["total_grad_l2_mean"])
 
+        _smooth_w = float(model.ee_params.get("smoothness_penalty_weight", 0.0) or 0.0)
+        # weight-normalised q-smoothness (== full_mass_mean * <||dq/dd||^2>);
+        # comparable across a smoothness sweep, unlike the weight-scaled train_smooth.
+        _qsm = (test_smooth[-1] / _smooth_w) if _smooth_w > 0.0 else float("nan")
         print(
             f"[{stage_name}] Epoch {epoch}/{epochs} | "
             f"Train={train_total[-1]:.4e} Test={test_total[-1]:.4e} "
+            f"Fit={test_model[-1]:.4e} Qsm={_qsm:.3e} "
             f"PredictiveTrain={train_model[-1] + train_smooth[-1] + train_l1[-1]:.4e} "
             f"PredictiveTest={test_model[-1] + test_smooth[-1] + test_l1[-1]:.4e} "
             f"LR={lr_log[-1]:.2e} Batch={batch_size}"
@@ -657,10 +699,14 @@ def train_one_stage(
             )
             print(
                 f"[{stage_name}] Loss share epoch {epoch} | "
+                f"Model/Total train={train_model_total_frac[-1]:.4e} "
+                f"test={test_model_total_frac[-1]:.4e} "
                 f"Smooth/Total train={train_smooth_total_frac[-1]:.4e} "
                 f"test={test_smooth_total_frac[-1]:.4e} "
                 f"L1/Total train={train_l1_total_frac[-1]:.4e} "
-                f"test={test_l1_total_frac[-1]:.4e}"
+                f"test={test_l1_total_frac[-1]:.4e} "
+                f"Gate/Total train={train_gate_total_frac[-1]:.4e} "
+                f"test={test_gate_total_frac[-1]:.4e}"
             )
             print(
                 f"[{stage_name}] Reg share epoch {epoch} | "
@@ -702,56 +748,56 @@ def train_one_stage(
         )
         aimmd_store.rcmodels[f"{stage_name}_model_most_recent"] = model
 
-        current_val_raw = float(
-            test_losses["total_loss"] - test_losses["stochastic_gate_regularization"]
-        )
-        current_train = float(
-            train_losses["total_loss"] - train_losses["stochastic_gate_regularization"]
-        )
+        # Selection/early-stopping/guard use the full objective (model +
+        # smoothness + l1 + gate); current_fit is the model-loss-only NLL,
+        # kept just for the Fit=/Qsm= diagnostic print.
+        current_val_raw = float(test_losses["total_loss"])
+        current_train = float(train_losses["total_loss"])
+        current_fit = float(test_losses.get("model_loss", current_val_raw))
+        current_train_fit = float(train_losses.get("model_loss", current_train))
+        sel_metric = current_val_raw
+        guard_metric = current_train
 
-        # Recovery checkpoint: best gate-penalty-free val loss, tracked every
-        # epoch so nan_rescue / the train-explosion guard always have a state to
-        # fall back to. NOT used as the final model when gates are selecting --
-        # during the ramp the raw loss legitimately rises as features are
-        # pruned, so the best raw loss is the pre-selection (all-gates-open)
-        # state. It is reset once at stop_start so that after selection the
-        # checkpoint reflects the pruned model.
-        if epoch == stop_start:
+        # Checkpoint on sel_metric; reset at stop_start and again at
+        # gate_frozen_epoch so each phase's best point is tracked
+        # independently of what came before it.
+        if epoch == stop_start or epoch == gate_frozen_epoch:
             best_recovery_val = np.inf
             best_state = None
-        if np.isfinite(current_val_raw) and current_val_raw < best_recovery_val:
-            best_recovery_val = current_val_raw
+        if np.isfinite(sel_metric) and sel_metric < best_recovery_val:
+            best_recovery_val = sel_metric
             best_state = deepcopy(model.nnet.state_dict())
             aimmd_store.rcmodels[f"{stage_name}_state_dict_best"] = TorchRCModelLite(
                 best_state,
                 meta={
                     "epoch": epoch,
+                    "val_fit": current_fit,
                     "val_loss_raw": current_val_raw,
                     "train_loss": current_train,
                 },
             )
             aimmd_store.rcmodels[f"{stage_name}_model_best"] = model
 
-        if (epoch == stop_start) or (
-            np.isfinite(current_train) and current_train < best_train_loss
+        if (epoch == stop_start or epoch == gate_frozen_epoch) or (
+            np.isfinite(guard_metric) and guard_metric < best_train_loss
         ):
-            best_train_loss = current_train if np.isfinite(current_train) else np.inf
+            best_train_loss = guard_metric if np.isfinite(guard_metric) else np.inf
 
-        # EMA-smoothed early-stopping metric: only active from stop_start so the
-        # gate dense/noise/ramp phases (where the loss legitimately rises) do not
-        # trip early stopping.
+        # EMA-smoothed early-stopping metric, active from stop_start; reset
+        # again at gate_frozen_epoch so the fine-tune phase is judged on its
+        # own terms.
         if epoch < stop_start:
-            current_val = current_val_raw
+            current_val = sel_metric
             no_improve = 0
         else:
-            if epoch == stop_start:
+            if epoch == stop_start or epoch == gate_frozen_epoch:
                 ema_val = None
                 best_loss = np.inf
                 no_improve = 0
             ema_val = (
-                current_val_raw
+                sel_metric
                 if ema_val is None
-                else float(ema_beta) * ema_val + (1.0 - float(ema_beta)) * current_val_raw
+                else float(ema_beta) * ema_val + (1.0 - float(ema_beta)) * sel_metric
             )
             current_val = ema_val
             improved = current_val < best_loss - float(min_delta)
@@ -761,26 +807,21 @@ def train_one_stage(
             else:
                 no_improve += 1
 
-        # During the gate ramp the raw loss rises by design (features are being
-        # pruned), so the plateau scheduler and the train-explosion guard would
-        # both misfire -- skip them there and resume once selection is done.
-        in_gate_ramp = bool(gates) and selection_start < epoch <= selection_end
-        if epoch > warmup_epochs and not in_gate_ramp:
-            scheduler.step(current_val_raw)
+        if epoch > warmup_epochs:
+            scheduler.step(sel_metric)
         print(
             f"[{stage_name}] EMA_Test={current_val:.4e} BestEMA={best_loss:.4e} "
             f"NoImprove={no_improve}/{early_stop_patience} "
         )
 
         if (
-            not in_gate_ramp
-            and np.isfinite(current_train)
+            np.isfinite(guard_metric)
             and np.isfinite(best_train_loss)
-            and current_train > float(train_explosion_factor) * best_train_loss
+            and guard_metric > float(train_explosion_factor) * best_train_loss
         ):
             print(
                 f"[{stage_name}] Train-loss guard triggered at epoch {epoch}: "
-                f"train={current_train:.4e}, best_train={best_train_loss:.4e}, "
+                f"train={guard_metric:.4e}, best_train={best_train_loss:.4e}, "
                 f"factor={train_explosion_factor:.2f}. Restoring best state."
             )
             break
@@ -789,6 +830,17 @@ def train_one_stage(
             print(
                 f"[{stage_name}] Early stopping at epoch {epoch} "
                 f"(patience {early_stop_patience}, best EMA val={best_loss:.4e})."
+            )
+            break
+
+        if (
+            gate_frozen_epoch is not None
+            and epoch >= gate_frozen_epoch + int(gate_freeze_max_epochs)
+        ):
+            print(
+                f"[{stage_name}] Bounded fine-tune cap reached at epoch {epoch} "
+                f"({gate_freeze_max_epochs} epochs after freezing at "
+                f"{gate_frozen_epoch}). Stopping."
             )
             break
     if best_state is not None:
@@ -826,6 +878,10 @@ def train_one_stage(
         "test_smooth_total_frac": test_smooth_total_frac,
         "train_l1_total_frac": train_l1_total_frac,
         "test_l1_total_frac": test_l1_total_frac,
+        "train_gate_total_frac": train_gate_total_frac,
+        "test_gate_total_frac": test_gate_total_frac,
+        "train_model_total_frac": train_model_total_frac,
+        "test_model_total_frac": test_model_total_frac,
         "train_reg_total_frac": train_reg_total_frac,
         "test_reg_total_frac": test_reg_total_frac,
         "lr": lr_log,
