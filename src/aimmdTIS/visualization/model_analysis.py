@@ -146,7 +146,7 @@ class ModelAnalysisMixin:
     ) -> plt.Axes:
         r"""Plot :math:`p(q')\ln p_\text{model}(q')` — loss per unit weight along q."""
         q, w, shot = self._q_and_weights(model)
-        w_norm = w / len(w)  # normalise by total frame count to get per-frame loss
+        w_norm = 2 * w / len(w)  # normalise by total frame count to get per-frame loss
         loss = self._loss_per_frame(model)[0]
 
         loss_hist, edges = np.histogram(q, bins=n_bins, weights=loss)
@@ -174,7 +174,7 @@ class ModelAnalysisMixin:
     ) -> plt.Axes:
         r"""Plot the normalised MBAR-weight distribution :math:`\rho^{RPE}(q')` along q."""
         q, w, _ = self._q_and_weights(model)
-        w_norm = w / w.sum()
+        w_norm = w / len(w)
         label  = r"$\rho^{RPE}(q')$" + ("*" if density else "")
         hist, edges = np.histogram(q, bins=n_bins, weights=w_norm, density=density)
         if ax is None:
@@ -412,8 +412,9 @@ class ModelAnalysisMixin:
     ) -> Dict[str, object]:
         """Compute per-q-bin weighted gradient statistics for the loaded trainset.
 
-        The result is cached in ``self._gradient_output_cache[id(model)]`` so
-        that repeated calls for the same model object are free.  Use
+        The result is cached in ``self._gradient_output_cache`` (keyed on the
+        model object itself via a WeakKeyDictionary) so that repeated calls
+        for the same model object are free.  Use
         :meth:`save_gradient_cache` / :meth:`load_gradient_cache` to persist
         results across notebook restarts.
 
@@ -451,7 +452,7 @@ class ModelAnalysisMixin:
         if self._desc is None:
             raise ValueError("load_trainset() must be called before gradient computation.")
 
-        cache_key = id(model)
+        cache_key = model
         if use_cache and cache_key in self._gradient_output_cache:
             print("Using cached gradient statistics for this model.")
             return self._gradient_output_cache[cache_key]
@@ -536,7 +537,7 @@ class ModelAnalysisMixin:
         path
             File path (the ``.npz`` extension is added automatically if absent).
         """
-        cache_key = id(model)
+        cache_key = model
         if cache_key not in self._gradient_output_cache:
             raise ValueError(
                 "No gradient cache found for this model. "
@@ -569,7 +570,7 @@ class ModelAnalysisMixin:
             path = path.with_suffix(".npz")
         data = np.load(str(path), allow_pickle=False)
         result: Dict[str, object] = {k: data[k] for k in data.files}
-        self._gradient_output_cache[id(model)] = result
+        self._gradient_output_cache[model] = result
         return result
 
 
@@ -632,7 +633,7 @@ class ModelAnalysisMixin:
             q_batch = q[start:end]
 
             gradients = self._compute_gradients_raw(model, desc_batch)
-            gradients = gradients / norm_factors
+            gradients = gradients * norm_factors
 
             for dim in range(n_desc):
                 H_dim, _, _ = np.histogram2d(
@@ -958,7 +959,8 @@ class ModelAnalysisMixin:
             or (self.descriptor_labels if hasattr(self, "descriptor_labels") else None)
             or [f"d{i}" for i in range(result["gradient_unit_vector_per_q_bin"].shape[1])]
         )
-
+        # if len(labels) != len(selection_show):
+        #     labels = labels[selection_show]
         bin_centers = result["bin_centers"]
         grad_mean = result["gradients_per_q_bin"]
         unit_std = result["gradient_unit_vector_per_q_bin_std"]
@@ -1059,8 +1061,18 @@ class ModelAnalysisMixin:
 
         handles = []
         num_desc = unit_from_mean.shape[1]
-        if selection_show is None:
-            selection_show = list(range(num_desc))
+        # if selection_show is None:
+        #     selection_show = list(range(num_desc))
+        # #if the labels array is not the size of selection show, take selection show index from the labels, if labels is not the size of num_desc then error
+        # if len(labels) != len(selection_show):
+        #     labels = [labels[i] for i in selection_show]
+
+        # # after reindexing, labels must match the number of descriptors
+        # if len(labels) != num_desc:
+        #     raise ValueError(
+        #         f"labels has length {len(labels)}, expected num_desc={num_desc}"
+        #     )
+
         for dim in range(num_desc):
             if dim not in selection_show:
                 continue
@@ -1152,7 +1164,7 @@ class ModelAnalysisMixin:
 
         fig.legend(
             handles=handles,
-            labels=labels[:num_desc],
+            labels=[labels[i] for i in selection_show],
             loc="lower center",
             bbox_to_anchor=(0.5, 0),
             ncol=min(num_desc, 3),
