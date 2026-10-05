@@ -1,6 +1,6 @@
 # AIMMD-TIS-Framework
 
-This repository contains the code and resources for the AIMMD-TIS method from the paper: "Understanding Reaction Mechanisms from Start to Finish".
+This repository contains the code and resources for the AIMMD-TIS method from the paper: "Understanding Mechanisms of Molecular Rare Events from Start to Finish". R. S. Breebaart, G. Lazzeri, R. Covino, and P. G. Bolhuis, Phys. Rev. Lett. 136, 168001 (2026). https://doi.org/10.1103/lk32-njx7
   
 ## What this repository includes
 
