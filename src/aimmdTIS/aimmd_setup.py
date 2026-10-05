@@ -16,6 +16,7 @@ import aimmd
 
 from .rcmodel import TIS_EEScalePytorchRCModel
 from .stochastic_gates import StochasticGates
+from .selector import UniformRCModelSelector
 
 
 class AIMMDSetup:
@@ -317,10 +318,10 @@ class AIMMDSetup:
 
         Returns
         -------
-        aimmd.ops.UniformRCModelSelector
+        aimmdTIS.selector.UniformRCModelSelector
             Configured selector.
         """
-        return aimmd.ops.UniformRCModelSelector(
+        return UniformRCModelSelector(
             model=RCModel,
             states=self.states,
             distribution=self.distribution,

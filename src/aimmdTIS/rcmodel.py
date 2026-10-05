@@ -590,3 +590,4 @@ def register_legacy_aimmd_alias():
 
     aimmd.pytorch.rcmodel.TIS_EEScalePytorchRCModel = TIS_EEScalePytorchRCModel
     aimmd.pytorch.TIS_EEScalePytorchRCModel = TIS_EEScalePytorchRCModel
+    aimmd.pytorch.rcmodel.binomial_loss_softplus = binomial_loss_softplus
