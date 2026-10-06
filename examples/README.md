@@ -4,7 +4,9 @@ These examples show the current AIMMD-TIS workflow. The simulation set-up
 (systems, engines, states, storages) comes from
 [ops-setup](https://github.com/Rik-Breebaart/ops-setup). The committor model,
 shooting-point selection and AIMMD-TIS sampling come from `aimmdTIS`.
-Reweighting of the TIS data uses [rpe_mbar](https://github.com/Rik-Breebaart/rpe_mbar).
+Reweighting of the TIS data uses [rpe_mbar](https://github.com/Rik-Breebaart/rpe_mbar),
+a separate package for multiset MBAR (Breebaart and Bolhuis, J. Chem. Phys.
+164, 104116 (2026), https://doi.org/10.1063/5.0318283).
 
 ```
 examples/
@@ -31,8 +33,9 @@ examples/
    order parameter. Each interface has its own OPS storage, so runs stay short
    and storages stay small. Descriptors are written on the fly to an ops-setup
    `DescriptorStorage`.
-4. **Reweighting.** `rpe_mbar` combines the interfaces into a reweighted path
-   ensemble (RPE) and gives crossing probabilities.
+4. **Reweighting.** `rpe_mbar` combines the forward and backward interface
+   sets with multiset MBAR into a reweighted path ensemble (RPE), and gives
+   crossing probabilities.
 5. **Training.** Train the committor on the reweighted data
    (`aimmdTIS.train_one_stage`). The new model defines the interfaces of the
    next iteration.

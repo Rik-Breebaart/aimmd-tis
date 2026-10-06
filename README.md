@@ -24,7 +24,7 @@ AIMMD-TIS combines [AIMMD](https://github.com/bio-phys/aimmd), which learns the 
 
 - [aimmd](https://github.com/bio-phys/aimmd), [OpenPathSampling](https://openpathsampling.org), PyTorch.
 - [ops-setup](https://github.com/Rik-Breebaart/ops-setup): system set-up (toy potentials, OpenMM host-guest), descriptor storage and trajectory loading. The examples use it throughout. The core `aimmdTIS` modules import without it, so the model, selector and `AIMMD_TIS` can also be used with your own OPS engines and states. Only `aimmdTIS.openmm_setup` and the descriptor-storage option of `AIMMD_TIS` need ops-setup.
-- [rpe_mbar](https://github.com/Rik-Breebaart/rpe_mbar): reweighted path ensemble and crossing probabilities from TIS data, used in the example notebooks.
+- [rpe_mbar](https://github.com/Rik-Breebaart/rpe_mbar): computes the reweighted path ensemble (RPE) and crossing probabilities from TIS data. It combines several interface sets (e.g. forward and backward TIS) with multiset MBAR, following R. S. Breebaart and P. G. Bolhuis, "Combining multiple interface set path ensembles with MBAR reweighting", J. Chem. Phys. 164, 104116 (2026). https://doi.org/10.1063/5.0318283. rpe_mbar is a separate package and is not included here. It is needed for the reweighting step and is used in the example notebooks.
 
 ## Installation
 
@@ -54,7 +54,7 @@ For the full workflow, including stable-state interface placement, RPE reweighti
 
 ## Reference
 
-If you use this repository, please cite the papers and the upstream AIMMD and OPS projects:
+If you use this repository, please cite the papers and the upstream AIMMD and OPS projects. If you use the RPE/MBAR reweighting, please also cite the MBAR paper:
 
 ```bibtex
 @article{breebaart2026aimmdtis,
@@ -76,5 +76,16 @@ If you use this repository, please cite the papers and the upstream AIMMD and OP
   pages   = {124125},
   year    = {2026},
   doi     = {10.1063/5.0350496}
+}
+
+@article{breebaart2026mbar,
+  title   = {Combining multiple interface set path ensembles with MBAR reweighting},
+  author  = {Breebaart, Rik S. and Bolhuis, Peter G.},
+  journal = {J. Chem. Phys.},
+  volume  = {164},
+  number  = {10},
+  pages   = {104116},
+  year    = {2026},
+  doi     = {10.1063/5.0318283}
 }
 ```

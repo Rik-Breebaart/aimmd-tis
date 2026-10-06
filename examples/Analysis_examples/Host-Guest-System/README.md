@@ -7,9 +7,11 @@ Analysis notebooks for the trained host–guest committor model in:
 > J. Chem. Phys. 165, 124125 (2026). https://doi.org/10.1063/5.0350496
 
 The model is trained on the reweighted path ensemble (RPE) from AIMMD-TIS
-simulations of the host–guest system, using 7 descriptors (host–guest distance,
-guest orientation and position angles, hydrogen bonds, waters in the cavity,
-hydrophobic contact score, shared waters).
+simulations of the host–guest system. The RPE is computed with multiset MBAR
+using the separate `rpe_mbar` package (Breebaart and Bolhuis, J. Chem. Phys.
+164, 104116 (2026), https://doi.org/10.1063/5.0318283). The model uses 7
+descriptors (host–guest distance, guest orientation and position angles,
+hydrogen bonds, waters in the cavity, hydrophobic contact score, shared waters).
 
 ## Notebooks
 
