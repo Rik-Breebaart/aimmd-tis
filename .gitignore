@@ -106,3 +106,6 @@ docs/_build/
 # Optional: lock files for apps (keep for libraries if needed)
 # Pipfile.lock
 # poetry.lock
+# Analysis notebooks: input data, caches and generated figures stay local
+examples/Analysis_examples/*/Files/
+examples/Analysis_examples/*/Figures/
