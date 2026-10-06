@@ -1,9 +1,5 @@
 ''' 
 This file will contain the setup script for performing TIS using the AIMMD learned committor model. 
-
-The goal of this setup file is to be able to work with any toy model for now. 
-Not yet looking into how to work on real systems, although the method should mostly be conversible to that case.
-
 '''
 import numpy as np 
 import matplotlib.pyplot as plt
@@ -473,7 +469,7 @@ class AIMMD_TIS:
                 move_scheme.append(paths.strategies.OrganizeByMoveGroupStrategy())
                 move_scheme.build_move_decision_tree()
             else:
-                ImportError("Incorrect move scheme given. Choose from either: 'OneWay' or 'TwoWay'")
+                raise ValueError("Incorrect move scheme given. Choose from either: 'OneWay' or 'TwoWay'")
 
             initial_conditions = move_scheme.initial_conditions_from_trajectories(initial_path)
             initial_conditions.sanity_check()

@@ -10,12 +10,16 @@ import argparse
 import sys
 from pathlib import Path
 
+import aimmd
 import numpy as np
 import openpathsampling as paths
 import torch
 from openpathsampling.experimental.storage import Storage
 
-from aimmdTIS import AIMMDSetup, TIS_setup, load_initial_trajectory
+from ops_setup.engines.openmm_sampling import load_initial_trajectory
+
+from aimmdTIS import AIMMD_TIS, AIMMDSetup
+from aimmdTIS.openmm_setup import TIS_setup
 
 
 def run_aimmd_tis_single_interface(
@@ -113,13 +117,11 @@ def run_aimmd_tis_single_interface(
     )
 
     # Create AIMMD storage and model
-    aimmd = __import__("aimmd").aimmd
     aimmd_store = aimmd.Storage(str(aimmd_store_path), "w")
     model = aimmd_setup.setup_RCModel(aimmd_store, load_model_path=previous_model_file)
 
     # Setup AIMMD TIS framework
-    from aimmdTIS import TIS_AIMMD
-    tis_framework = TIS_AIMMD(
+    tis_framework = AIMMD_TIS(
         tis_setup.md_engine,
         model,
         tis_setup.states[0],
@@ -144,7 +146,7 @@ def run_aimmd_tis_single_interface(
         scheme_selector=tis_setup.TIS_selector,
         scheme_modifier=tis_setup.modification_method,
         gaussian_parameter_width=tis_setup.gaussian_width,
-        gausssian_parameter_shift=tis_setup.gaussian_origin_shift,
+        gaussian_parameter_shift=tis_setup.gaussian_origin_shift,
         direction=direction,
         directory=output_path
     )
