@@ -6,16 +6,16 @@ This guide explains how to set up conda environments for aimmd-tis development a
 
 ```bash
 # Create environment
-cd /Users/rbreeba/code/aimmd-tis
+cd aimmd-tis
 conda env create -f environment.yml
 
 # Activate
 conda activate aimmd-tis
 
 # Install dependencies
-pip install -e /Users/rbreeba/code/ops-setup[openmm]  # ops-setup
-pip install -e /Users/rbreeba/code/aimmd              # aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis/src      # aimmd-tis (setup.py lives in src)
+pip install -e /path/to/ops-setup[openmm]  # ops-setup
+pip install -e /path/to/aimmd              # aimmd
+pip install -e src/      # aimmd-tis (setup.py lives in src)
 
 # Verify
 python -c "import aimmdTIS, aimmd, ops_setup; print('✓ Ready!')"
@@ -36,13 +36,13 @@ python -c "import aimmdTIS, aimmd, ops_setup; print('✓ Ready!')"
 conda activate aimmd-tis
 
 # Step 2: Install ops-setup
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
+pip install -e /path/to/ops-setup[openmm]
 
 # Step 3: Install aimmd
-pip install -e /Users/rbreeba/code/aimmd
+pip install -e /path/to/aimmd
 
 # Step 4: Install aimmd-tis
-pip install -e /Users/rbreeba/code/aimmd-tis/src
+pip install -e src/
 ```
 
 ---
@@ -79,15 +79,15 @@ The `environment.yml` includes:
 
 ```bash
 # Create environment
-conda env create -f /Users/rbreeba/code/aimmd-tis/environment.yml
+conda env create -f /path/to/aimmd-tis/environment.yml
 
 # Activate
 conda activate aimmd-tis
 
 # Install packages
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-pip install -e /Users/rbreeba/code/aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis
+pip install -e /path/to/ops-setup[openmm]
+pip install -e /path/to/aimmd
+pip install -e /path/to/aimmd-tis
 ```
 
 ### Method 2: Manual Setup
@@ -116,9 +116,9 @@ conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvi
 conda install pytorch torchvision torchaudio cpuonly -c pytorch
 
 # Install your packages
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-pip install -e /Users/rbreeba/code/aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis/src
+pip install -e /path/to/ops-setup[openmm]
+pip install -e /path/to/aimmd
+pip install -e src/
 ```
 
 ### Method 3: Minimal Environment
@@ -136,9 +136,9 @@ conda install -c conda-forge \
   openmm openmmtools mdtraj \
   pytorch::pytorch pytorch::pytorch-cuda=11.8
 
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-pip install -e /Users/rbreeba/code/aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis/src
+pip install -e /path/to/ops-setup[openmm]
+pip install -e /path/to/aimmd
+pip install -e src/
 ```
 
 ---
@@ -225,7 +225,7 @@ EOF
 # Solution: Make sure aimmd is installed
 
 conda activate aimmd-tis
-pip install -e /Users/rbreeba/code/aimmd
+pip install -e /path/to/aimmd
 
 # Verify
 python -c "import aimmd; print('OK')"
@@ -303,15 +303,15 @@ For active development of aimmd-tis:
 
 ```bash
 # Create development environment
-conda env create -f /Users/rbreeba/code/aimmd-tis/environment.yml -n aimmd-tis-dev
+conda env create -f /path/to/aimmd-tis/environment.yml -n aimmd-tis-dev
 
 # Activate
 conda activate aimmd-tis-dev
 
 # Install all three packages in editable mode
-pip install -e /Users/rbreeba/code/ops-setup[openmm,dev]
-pip install -e /Users/rbreeba/code/aimmd[dev]
-pip install -e /Users/rbreeba/code/aimmd-tis/src
+pip install -e /path/to/ops-setup[openmm,dev]
+pip install -e /path/to/aimmd[dev]
+pip install -e src/
 
 # Install additional dev tools
 conda install -c conda-forge black flake8 mypy isort
@@ -323,7 +323,7 @@ conda install -c conda-forge black flake8 mypy isort
 conda activate aimmd-tis-dev
 
 # From aimmd-tis directory
-cd /Users/rbreeba/code/aimmd-tis
+cd aimmd-tis
 pytest tests/
 
 # With coverage
@@ -334,13 +334,13 @@ pytest --cov=aimmdTIS tests/
 
 ```bash
 # Format code
-black /Users/rbreeba/code/aimmd-tis/src
+black src/
 
 # Check style
-flake8 /Users/rbreeba/code/aimmd-tis/src
+flake8 src/
 
 # Type checking
-mypy /Users/rbreeba/code/aimmd-tis/src
+mypy src/
 ```
 
 ---
@@ -398,13 +398,13 @@ conda install -c conda-forge numpy --update-all
 
 ```bash
 # Update ops-setup
-pip install --upgrade /Users/rbreeba/code/ops-setup[openmm]
+pip install --upgrade /path/to/ops-setup[openmm]
 
 # Update aimmd
-pip install --upgrade /Users/rbreeba/code/aimmd
+pip install --upgrade /path/to/aimmd
 
 # Update aimmd-tis
-pip install --upgrade /Users/rbreeba/code/aimmd-tis
+pip install --upgrade /path/to/aimmd-tis
 ```
 
 ---
@@ -439,27 +439,27 @@ Set environment variables for the conda environment:
 
 ```bash
 # Create activation script
-mkdir -p /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/activate.d
-mkdir -p /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/deactivate.d
+mkdir -p $CONDA_PREFIX/etc/conda/activate.d
+mkdir -p $CONDA_PREFIX/etc/conda/deactivate.d
 
 # Create activation script
-cat > /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/activate.d/env_vars.sh << 'EOF'
+cat > $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh << 'EOF'
 #!/bin/bash
-export OPS_SETUP_PATH=/Users/rbreeba/code/ops-setup
-export AIMMD_PATH=/Users/rbreeba/code/aimmd
-export AIMMD_TIS_PATH=/Users/rbreeba/code/aimmd-tis
+export OPS_SETUP_PATH=/path/to/ops-setup
+export AIMMD_PATH=/path/to/aimmd
+export AIMMD_TIS_PATH=/path/to/aimmd-tis
 EOF
 
 # Create deactivation script
-cat > /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/deactivate.d/env_vars.sh << 'EOF'
+cat > $CONDA_PREFIX/etc/conda/deactivate.d/env_vars.sh << 'EOF'
 #!/bin/bash
 unset OPS_SETUP_PATH
 unset AIMMD_PATH
 unset AIMMD_TIS_PATH
 EOF
 
-chmod +x /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/activate.d/env_vars.sh
-chmod +x /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/deactivate.d/env_vars.sh
+chmod +x $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+chmod +x $CONDA_PREFIX/etc/conda/deactivate.d/env_vars.sh
 ```
 
 Now these variables will be set when you activate the environment.
