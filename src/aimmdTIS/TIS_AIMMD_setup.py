@@ -39,6 +39,9 @@ def _coordinates_descriptor_transform(snapshot):
 
 
 def _predict_with_nnet(descriptors, nnet, batch_size):
+    # A single snapshot gives a 1-D descriptor vector; networks with BatchNorm need a
+    # (batch, features) input, so always pass at least a batch of one.
+    descriptors = np.atleast_2d(np.asarray(descriptors))
     device = next(nnet.parameters()).device
     dtype = next(nnet.parameters()).dtype
     n_split = (descriptors.shape[0] // batch_size) + 1
