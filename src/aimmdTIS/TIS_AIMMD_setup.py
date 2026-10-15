@@ -39,6 +39,9 @@ def _coordinates_descriptor_transform(snapshot):
 
 
 def _predict_with_nnet(descriptors, nnet, batch_size):
+    # A single snapshot gives a 1-D descriptor vector; networks with BatchNorm need a
+    # (batch, features) input, so always pass at least a batch of one.
+    descriptors = np.atleast_2d(np.asarray(descriptors))
     device = next(nnet.parameters()).device
     dtype = next(nnet.parameters()).dtype
     n_split = (descriptors.shape[0] // batch_size) + 1
@@ -71,6 +74,18 @@ def _q_committor_temp(snapshot, descriptor_transform, weights, bias):
     descriptors = descriptor_transform(snapshot)
     pred = np.dot(descriptors, weights[:len(descriptors)]) + bias
     return float(np.asarray(pred).reshape(-1)[0])
+
+
+IN_STATE_LOW = -1e10   # forward: frames in A sit below every interface
+IN_STATE_HIGH = 1e10   # backward: frames in B sit above every interface
+
+
+def _cv_with_state(snapshot, cv, state, in_state_value):
+    """Order parameter that equals ``in_state_value`` inside ``state``
+    and ``cv(snapshot)`` everywhere else."""
+    if state(snapshot):
+        return in_state_value
+    return cv(snapshot)
 
 
 class AIMMD_TIS:
@@ -175,6 +190,64 @@ class AIMMD_TIS:
         storage.save(template)
         storage.save(self.engine)
         return storage, storage_path
+
+    def create_interface_set(self, interface_value, direction="forward"):
+        """
+        Create an interface set for TIS.
+
+        The interface volume is the union of the initial state and the
+        region on the state side of ``interface_value``:
+
+            forward:  stateA ∪ {cv_q ≤ interface_value}
+            backward: stateB ∪ {cv_q ≥ interface_value}
+
+        This is built from a modified order parameter that takes a
+        sentinel value inside the state, so a path counts as crossing
+        the interface only once it has left the state *and* passed
+        ``interface_value``.
+
+        Parameters
+        ----------
+        interface_value : float
+            Value of cv_q at the interface.
+        direction : str, optional
+            Direction of crossing ('forward' or 'backward'). Default is 'forward'.
+
+        Returns
+        -------
+        VolumeInterfaceSet
+            Interface set for TIS simulation.
+        """
+        if direction == "forward":
+            lambda_cv = paths.FunctionCV(
+                f"{self.cv_q.name}_with_stateA",
+                _cv_with_state,
+                cv=self.cv_q,
+                state=self.stateA,
+                in_state_value=IN_STATE_LOW,
+            )
+            return paths.VolumeInterfaceSet(
+                lambda_cv,
+                minvals=-float("inf"),
+                maxvals=interface_value,
+            )
+
+        elif direction == "backward":
+            lambda_cv = paths.FunctionCV(
+                f"{self.cv_q.name}_with_stateB",
+                _cv_with_state,
+                cv=self.cv_q,
+                state=self.stateB,
+                in_state_value=IN_STATE_HIGH,
+            )
+            return paths.VolumeInterfaceSet(
+                lambda_cv,
+                minvals=interface_value,
+                maxvals=float("inf"),
+            )
+
+        else:
+            raise ValueError(f"direction must be 'forward' or 'backward', got {direction!r}")
 
     @staticmethod
     def _as_scalar(value):
@@ -393,38 +466,15 @@ class AIMMD_TIS:
 
         print("Creating network...")
         paths.InterfaceSet._reset()
+        # Interface = initial state ∪ {cv_q on the state side of interface_value}
+        interface_set = self.create_interface_set(interface_value, direction)
         if direction=="forward":
-            # Define the interface volume where cv_q <= interface_value
-            InterfaceVolume = paths.VolumeInterfaceSet(self.cv_q, minvals=-float("inf"), maxvals=interface_value)
-
-            UnionVolumeStateA = paths.UnionVolume(InterfaceVolume[0], self.stateA)
-
-            # Refine the interface to exclude state A
-            InterfaceOutStateVolume = paths.VolumeInterfaceSet(
-                self.cv_q, 
-                minvals=-float("inf"), 
-                maxvals=interface_value, 
-                intersect_with=UnionVolumeStateA
-            )
             # Create a MISTIS network for transitions: A -> Interface -> B
-            network = paths.MISTISNetwork([(self.stateA, InterfaceOutStateVolume, self.stateB)]).named('mstis')
-
-        elif direction=="backward":
-            # Define the interface volume where cv_q >= interface_value
-            InterfaceVolume = paths.VolumeInterfaceSet(self.cv_q, minvals=interface_value, maxvals=float("inf"))
-
-            # Combine the interface volume with state B
-            UnionVolumeStateB = paths.UnionVolume(InterfaceVolume[0], self.stateB)
-
-            # Refine the interface to exclude state B
-            InterfaceOutStateVolume = paths.VolumeInterfaceSet(self.cv_q, minvals=interface_value, maxvals=float("inf"), intersect_with=UnionVolumeStateB) 
-
-            # Create a MISTIS network for transitions: B -> Interface -> A
-            network = paths.MISTISNetwork([(self.stateB, InterfaceOutStateVolume, self.stateA)]).named('mstis')
-
+            network = paths.MISTISNetwork([(self.stateA, interface_set, self.stateB)]).named('mstis')
         else:
-            NameError("incorrect direction method has been given, choose from either 'forward' or 'backward'")
-        
+            # Create a MISTIS network for transitions: B -> Interface -> A
+            network = paths.MISTISNetwork([(self.stateB, interface_set, self.stateA)]).named('mstis')
+
 
         if hasattr(storage, "engines"):
             engine = storage.engines[-1]
