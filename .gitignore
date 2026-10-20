@@ -21,6 +21,7 @@ __pycache__/
 *.npy
 *.npz
 *.h5
+*Figures*
 
 # Distribution / packaging
 .Python
