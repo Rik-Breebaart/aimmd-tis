@@ -3,6 +3,7 @@
 # Importing modules within the package
 
 from .TIS_AIMMD_setup import AIMMD_TIS
+from .aimmd_setup import AIMMDSetup
 from .rcmodel import TIS_EEScalePytorchRCModel, register_legacy_aimmd_alias
 from .stochastic_gates import StochasticGates
 from .TIS_Analysis import Create_Stable_trainset, Crossing_Probability_and_weights, RPE_toy, DataStore, InterfaceData
