@@ -1,44 +1,51 @@
 name: aimmd-tis
 channels:
   - conda-forge
-  - defaults
 dependencies:
   # Core Python
   - python=3.11
   - pip
-  
+  # aimmd 0.9 imports pkg_resources, which newer setuptools no longer ships.
+  - setuptools<81
+
   # Scientific computing
-  - numpy
+  # numpy<2: aimmd 0.9 (the version aimmdTIS needs, see CONDA_SETUP.md) uses
+  # np.string_, which was removed in NumPy 2.
+  - numpy<2
   - scipy
+  - pandas
   - matplotlib
-  
+
   # Machine learning
   - pytorch
 
   # Molecular dynamics and path sampling
-  - openpathsampling
-  
-  # OpenMM and tools
+  - openpathsampling=1.6.0
   - openmm
   - openmmtools
-  - mdtraj
-  
+  # mdtraj 1.11.1's pip metadata requires numpy~=2.0, so a later
+  # `pip install` would silently upgrade numpy to 2.x.
+  - mdtraj=1.11.0
+
   # Utilities
   - pyyaml
   - networkx
   - h5py
-  - cython
-  
+  - cython  # needed to build aimmd
+
   # Development tools
   - jupyter
   - ipython
   - pytest
   - pytest-cov
-  
+
   # Code quality
   - black
   - flake8
   - mypy
 
-  # core software dependencies
-  - aimmd
+  # aimmd itself is not on conda-forge. It is installed from a git checkout
+  # (see CONDA_SETUP.md). aimmd 0.9 imports a function that asyncmd >= 0.4
+  # renamed, so asyncmd is pinned here.
+  - pip:
+      - asyncmd==0.3.3

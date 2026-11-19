@@ -22,25 +22,38 @@ AIMMD-TIS combines [AIMMD](https://github.com/bio-phys/aimmd), which learns the 
 
 ## Dependencies
 
-- [aimmd](https://github.com/bio-phys/aimmd), [OpenPathSampling](https://openpathsampling.org), PyTorch.
+- [aimmd](https://github.com/bio-phys/aimmd) **0.9** (commit `1848a7a`), [OpenPathSampling](https://openpathsampling.org) 1.6, PyTorch. aimmdTIS does not work with aimmd 0.10 yet (`PytorchRCModel` no longer accepts `cache_file`). aimmd 0.9 needs `asyncmd==0.3.3` and `numpy<2`. `environment.yml` pins both.
 - [ops-setup](https://github.com/Rik-Breebaart/ops-setup): system set-up (toy potentials, OpenMM host-guest), descriptor storage and trajectory loading. The examples use it throughout. The core `aimmdTIS` modules import without it, so the model, selector and `AIMMD_TIS` can also be used with your own OPS engines and states. Only `aimmdTIS.openmm_setup` and the descriptor-storage option of `AIMMD_TIS` need ops-setup.
 - [rpe_mbar](https://github.com/Rik-Breebaart/rpe_mbar): computes the reweighted path ensemble (RPE) and crossing probabilities from TIS data. It combines several interface sets (e.g. TIS simulations computed from different interface functions) with multiset MBAR, following R. S. Breebaart and P. G. Bolhuis, "Combining multiple interface set path ensembles with MBAR reweighting", J. Chem. Phys. 164, 104116 (2026). https://doi.org/10.1063/5.0318283. rpe_mbar is a separate package and is not included here. It is needed for the reweighting step and is used in the example notebooks.
 
 ## Installation
 
 ```bash
-conda env create -f environment.yml
+# Get the sources (in one parent folder)
+git clone https://github.com/Rik-Breebaart/aimmd-tis
+git clone https://github.com/Rik-Breebaart/ops-setup
+git clone https://github.com/Rik-Breebaart/rpe_mbar
+git clone https://github.com/bio-phys/aimmd
+git -C aimmd checkout 1848a7a            # aimmd 0.9; aimmdTIS does not support 0.10 yet
+
+# Environment (numpy<2, OpenPathSampling 1.6, asyncmd 0.3.3)
+conda env create -f aimmd-tis/environment.yml
 conda activate aimmd-tis
 
-pip install -e /path/to/aimmd
-pip install -e /path/to/ops-setup
-pip install -e /path/to/rpe_mbar
-pip install -e src/          # aimmdTIS (setup.py lives in src/)
+# Packages
+pip install -e "./ops-setup[openmm]"
+pip install --no-build-isolation -e ./aimmd    # aimmd's build needs the env's Cython
+pip install -e ./rpe_mbar
+pip install -e ./aimmd-tis/src                 # aimmdTIS (setup.py lives in src/)
 
-python -c "import aimmd, aimmdTIS, ops_setup; print('ok')"
+# Check (run this outside the parent folder: the aimmd/ clone folder there
+# would be imported instead of the installed package)
+cd aimmd-tis/examples/toy_examples
+python -c "import aimmd, aimmdTIS, ops_setup, rpe_mbar; print('ok')"
+pytest tests                                   # about 30 s
 ```
 
-See [CONDA_SETUP.md](CONDA_SETUP.md) for more detail.
+See [CONDA_SETUP.md](CONDA_SETUP.md) for why the versions are pinned and for troubleshooting.
 
 ## Quick start
 
