@@ -110,3 +110,10 @@ docs/_build/
 # Analysis notebooks: input data, caches and generated figures stay local
 examples/Analysis_examples/*/Files/
 examples/Analysis_examples/*/Figures/
+# wolfe_quapp_iterative example outputs
+examples/wolfe_quapp_iterative/results/
+examples/wolfe_quapp_iterative/quick_results/
+!examples/wolfe_quapp_iterative/theory/*.npy
+examples/wolfe_quapp_iterative/results_it_100_steps/
+examples/wolfe_quapp_iterative/results_reseed_200_steps/
+examples/wolfe_quapp_iterative/results_harmonics20/

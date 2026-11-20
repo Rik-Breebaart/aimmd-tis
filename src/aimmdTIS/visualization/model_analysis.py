@@ -1061,8 +1061,8 @@ class ModelAnalysisMixin:
 
         handles = []
         num_desc = unit_from_mean.shape[1]
-        # if selection_show is None:
-        #     selection_show = list(range(num_desc))
+        if selection_show is None:
+            selection_show = list(range(num_desc))
         # #if the labels array is not the size of selection show, take selection show index from the labels, if labels is not the size of num_desc then error
         # if len(labels) != len(selection_show):
         #     labels = [labels[i] for i in selection_show]

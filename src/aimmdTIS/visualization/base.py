@@ -112,7 +112,10 @@ class BaseVisualizer:
         self._w     = np.asarray(trainset["weights"],       dtype=np.float64)
         self._shot  = np.asarray(trainset["shot_results"],  dtype=np.float64)
         self._make_desc_phys()
-        # Invalidate any cached model output — data has changed.
+        # Invalidate everything derived from the previous trainset — data has
+        # changed (histograms and projections live in _cache, model outputs and
+        # gradients in their own caches).
+        self._cache.clear()
         self._model_output_cache.clear()
         self._gradient_output_cache.clear()
 
@@ -270,9 +273,23 @@ class BaseVisualizer:
         standard_value: Optional[Iterable[float]] = None,
         cache_key: str = "q_model_2d",
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Compute 2D q(x) model grid with caching."""
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        """Compute 2D q(x) model grid with caching.
+
+        The cache entry is tied to the model object and the grid settings, so a
+        different model (e.g. the next AIMMD-TIS iteration) is never served the
+        grid of an earlier one.
+        """
+        key = (
+            cache_key,
+            n_bins_2d if np.shape(n_bins_2d) == () else tuple(n_bins_2d),
+            tuple(descriptor_dims) if descriptor_dims is not None else None,
+            tuple(dims_extent) if dims_extent is not None else None,
+            tuple(standard_value) if standard_value is not None else None,
+            id(model),
+        )
+        cached = self._cache.get(key)
+        if cached is not None and cached[0] is model:
+            return cached[1:]
 
         coord, xedges, yedges = self.create_2d_projection_coord(
             n_bins_2d=n_bins_2d,
@@ -284,7 +301,8 @@ class BaseVisualizer:
         q = q.reshape((len(yedges), len(xedges)))
         X, Y = np.meshgrid(xedges, yedges)
 
-        self._cache[cache_key] = (q, X, Y)
+        # Keep a reference to the model so its id() cannot be reused while cached.
+        self._cache[key] = (model, q, X, Y)
         return q, X, Y
 
     # -------------------------
