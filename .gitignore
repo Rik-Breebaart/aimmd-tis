@@ -117,3 +117,7 @@ examples/wolfe_quapp_iterative/quick_results/
 examples/wolfe_quapp_iterative/results_it_100_steps/
 examples/wolfe_quapp_iterative/results_reseed_200_steps/
 examples/wolfe_quapp_iterative/results_harmonics20/
+# toy notebook outputs
+examples/toy_tutorial_quick/
+examples/toy_tutorial_results/
+examples/toy_example_aimmd_tis_files/

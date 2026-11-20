@@ -10,8 +10,10 @@ a separate package for multiset MBAR (Breebaart and Bolhuis, J. Chem. Phys.
 
 ```
 examples/
-├── aimmd_with_toy_systems.ipynb     # full workflow on a 2D toy potential (start here)
+├── aimmd_tis_toy_tutorial.ipynb     # guided tutorial: full workflow on a 2D toy potential (start here)
+├── aimmd_with_toy_systems.ipynb     # older version of the toy workflow (legacy, see below)
 ├── config_aimmd.json                # AIMMD model / training settings used by the toy examples
+├── wolfe_quapp_iterative/           # iterative AIMMD-TIS (several iterations, multi-set MBAR)
 ├── toy_examples/                    # the same workflow as command-line scripts
 │   ├── toy_tps_aimmd.py             #   step 1: AIMMD-TPS
 │   ├── toy_tis_aimmd.py             #   step 2: AIMMD-TIS on the learned committor
@@ -31,23 +33,42 @@ examples/
 3. **AIMMD-TIS.** `aimmdTIS.AIMMD_TIS.run_TIS_sequentially` runs TIS
    interface by interface, forward (A→B) and backward (B→A), with q as the
    order parameter. Each interface has its own OPS storage, so runs stay short
-   and storages stay small. Descriptors are written on the fly to an ops-setup
-   `DescriptorStorage`.
+   and storages stay small. While sampling, each path's descriptors and shot
+   result are written to an ops-setup `DescriptorStorage`, and its q extrema to
+   a CSV file (row = MC step). The later steps use only these files; the OPS
+   storages do not have to be opened again.
 4. **Reweighting.** `rpe_mbar` combines the forward and backward interface
    sets with multiset MBAR into a reweighted path ensemble (RPE), and gives
-   crossing probabilities.
+   crossing probabilities. `aimmdTIS.rpe_dataset_from_descriptor_storage`
+   builds the `RpeDataset` from the descriptor storages.
 5. **Training.** Train the committor on the reweighted data
    (`aimmdTIS.train_one_stage`). The new model defines the interfaces of the
    next iteration.
 
 ## Toy potential
 
-### Notebook
+### Tutorial notebook
 
-`aimmd_with_toy_systems.ipynb` covers steps 1–5 on the Wolfe-Quapp potential.
-Flags in the first cells (`run_TPS`, `run_stable`, `run_TIS`, …) select which
-steps are run. Steps that are switched off reload their results from
-`toy_example_aimmd_tis_files/`.
+`aimmd_tis_toy_tutorial.ipynb` runs steps 1–5 on the Wolfe-Quapp potential
+and explains each step. Start Jupyter from `examples/`. With `QUICK = True`
+(default) a run from scratch takes about 10 minutes on a laptop CPU; with
+`QUICK = False` it uses the sizes of the reference figures. Each stage saves
+its results (in `toy_tutorial_quick/` or `toy_tutorial_results/`) and is
+skipped on a rerun; `RERUN = True` redoes everything.
+
+### Legacy notebook
+
+`aimmd_with_toy_systems.ipynb` is the earlier version of the same workflow,
+kept for reference. Its `run_*` flags default to `False`, so on a fresh clone
+it fails at the first load. Its RPE cell reopens every TIS `.nc` storage, and
+the descriptors there are taken one MC step earlier than the MBAR weights.
+Use the tutorial notebook instead.
+
+### Iterative example
+
+`wolfe_quapp_iterative/run_iterative.py` repeats the TIS → RPE → training
+cycle for several iterations and compares each model with the exact
+committor. See `wolfe_quapp_iterative/README.md`.
 
 ### Scripts
 

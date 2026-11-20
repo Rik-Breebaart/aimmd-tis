@@ -63,7 +63,7 @@ python toy_tps_aimmd.py 100 -o results/            # AIMMD-TPS, trains the commi
 python toy_tis_aimmd.py results/ -i -3 -2 -1 -n 50 # AIMMD-TIS on the learned committor
 ```
 
-For the full workflow, including stable-state interface placement, RPE reweighting and training, open `examples/aimmd_with_toy_systems.ipynb`.
+For the full workflow, including stable-state interface placement, RPE reweighting and training, open `examples/aimmd_tis_toy_tutorial.ipynb` (start Jupyter from `examples/`; `QUICK = True` runs in about 10 minutes).
 
 ## Reference
 
