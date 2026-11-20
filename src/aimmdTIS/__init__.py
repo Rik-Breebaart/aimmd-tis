@@ -4,7 +4,7 @@
 
 from .TIS_AIMMD_setup import AIMMD_TIS, masked_extrema
 from .aimmd_setup import AIMMDSetup
-from .extrema import extrema_from_descriptor_storage, trajectories_from_descriptor_storage
+from .extrema import extrema_from_descriptor_storage, trajectories_from_descriptor_storage, rpe_dataset_from_descriptor_storage
 from .rcmodel import TIS_EEScalePytorchRCModel, register_legacy_aimmd_alias
 from .stochastic_gates import StochasticGates
 from .TIS_Analysis import Create_Stable_trainset, Crossing_Probability_and_weights, RPE_toy, DataStore, InterfaceData
