@@ -23,9 +23,9 @@
     "use_GPU": false,
     "ee_params": {
       "efficiency_factor": false,
-      "lr_0": 0.0001,
+      "lr_0": 0.001,
       "lr_min": 2e-07,
-      "epochs_per_train": 1,
+      "epochs_per_train": 5,
       "interval": 5,
       "window": 75,
       "cut_off": 30,
