@@ -1,496 +1,106 @@
 # AIMMD-TIS Conda Environment Setup
 
-This guide explains how to set up conda environments for aimmd-tis development and usage.
+This guide sets up one conda environment with aimmdTIS and the packages it builds on:
+[ops-setup](https://github.com/Rik-Breebaart/ops-setup), [aimmd](https://github.com/bio-phys/aimmd)
+and [rpe_mbar](https://github.com/Rik-Breebaart/rpe_mbar).
 
-## Quick Start (2 minutes)
+## Install
+
+Clone the four repositories into one parent folder:
 
 ```bash
-# Create environment
-cd /Users/rbreeba/code/aimmd-tis
-conda env create -f environment.yml
+git clone https://github.com/Rik-Breebaart/aimmd-tis
+git clone https://github.com/Rik-Breebaart/ops-setup
+git clone https://github.com/Rik-Breebaart/rpe_mbar
+git clone https://github.com/bio-phys/aimmd
+git -C aimmd checkout 1848a7a
+```
 
-# Activate
+Create the environment and install the packages in this order:
+
+```bash
+conda env create -f aimmd-tis/environment.yml
 conda activate aimmd-tis
 
-# Install dependencies
-pip install -e /Users/rbreeba/code/ops-setup[openmm]  # ops-setup
-pip install -e /Users/rbreeba/code/aimmd              # aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis/src      # aimmd-tis (setup.py lives in src)
-
-# Verify
-python -c "import aimmdTIS, aimmd, ops_setup; print('✓ Ready!')"
+pip install -e "./ops-setup[openmm]"           # system set-up, engines, descriptor storage
+pip install --no-build-isolation -e ./aimmd    # committor models and selectors
+pip install -e ./rpe_mbar                      # RPE / multiset MBAR reweighting
+pip install -e ./aimmd-tis/src                 # aimmdTIS (setup.py lives in src/)
 ```
 
----
-
-## Installation Order
-
-**Important**: Install packages in this order:
-
-1. **ops-setup** (foundation - TPS/TIS infrastructure)
-2. **aimmd** (machine learning for RCs)
-3. **aimmd-tis** (integration layer)
+Check the installation:
 
 ```bash
-# Step 1: Activate environment
-conda activate aimmd-tis
-
-# Step 2: Install ops-setup
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-
-# Step 3: Install aimmd
-pip install -e /Users/rbreeba/code/aimmd
-
-# Step 4: Install aimmd-tis
-pip install -e /Users/rbreeba/code/aimmd-tis/src
+cd aimmd-tis/examples/toy_examples
+python -c "import aimmd, aimmdTIS, ops_setup, rpe_mbar; print('ok')"
+pytest tests              # 4 smoke tests, about 30 s
 ```
 
----
-
-## Environment Features
-
-The `environment.yml` includes:
-
-### Base Scientific Stack
-- Python 3.10
-- NumPy, SciPy, Matplotlib
-- Jupyter, IPython
-
-### Molecular Dynamics
-- OpenPathSampling (path sampling)
-- OpenMM (MD engine)
-- OpenMMTools (utilities)
-- MDTraj (trajectory analysis)
-
-### Machine Learning
-- PyTorch with CUDA 11.8 support
-- CPU-only alternative available
-
-### Development Tools
-- pytest (testing)
-- Jupyter (notebooks)
-- Black, Flake8 (code quality)
-
----
-
-## Installation Methods
-
-### Method 1: From Environment File (Recommended)
+Then run the toy workflow (see [examples/README.md](examples/README.md)):
 
 ```bash
-# Create environment
-conda env create -f /Users/rbreeba/code/aimmd-tis/environment.yml
-
-# Activate
-conda activate aimmd-tis
-
-# Install packages
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-pip install -e /Users/rbreeba/code/aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis
+python toy_tps_aimmd.py 50 -o results/                     # AIMMD-TPS, about 30 s
+python toy_tis_aimmd.py results/ -i -2 -1 -n 20 -d forward  # AIMMD-TIS
+python toy_tis_aimmd.py results/ -i 2 1 -n 20 -d backward
 ```
 
-### Method 2: Manual Setup
+## Why the versions are pinned
 
-```bash
-# Create Python 3.10 environment
-conda create -n aimmd-tis python=3.10 -c conda-forge
+| Pin | Reason |
+|---|---|
+| aimmd at commit `1848a7a` (0.9) | aimmd 0.10 removed the `cache_file` argument of `PytorchRCModel`, which aimmdTIS passes. aimmd 0.10 also requires OpenPathSampling ≥ 1.6.1, and those releases require NumPy < 2 while current openmmtools requires NumPy ≥ 2. |
+| `asyncmd==0.3.3` | aimmd 0.9 imports `construct_TP_from_plus_and_minus_traj_segments`, which asyncmd ≥ 0.4 renamed. aimmd does not pin asyncmd itself, so pip would install the latest version and `import aimmd` would fail. |
+| `numpy<2` | aimmd 0.9 writes storage attributes with `np.string_`, which NumPy 2 removed. With NumPy 2, `aimmd.Storage(..., "w")` fails. |
+| `openpathsampling=1.6.0` | The version tested with this combination. |
+| `mdtraj=1.11.0` | mdtraj 1.11.1 declares `numpy~=2.0` in its pip metadata. conda installs it next to NumPy 1.26 anyway, but the next `pip install -e` of a package that depends on mdtraj (ops-setup) then upgrades NumPy to 2.x. |
+| `setuptools<81` | aimmd 0.9 imports `pkg_resources` (in `aimmd/base/storage.py`), which newer setuptools releases removed. |
+| `pip install --no-build-isolation` for aimmd | aimmd 0.9 has no `pyproject.toml`, so pip builds it in an isolated environment without Cython and the build fails. Without isolation it uses the Cython from the conda environment. |
 
-# Activate
-conda activate aimmd-tis
-
-# Install scientific stack
-conda install -c conda-forge \
-  numpy scipy matplotlib \
-  jupyter ipython \
-  pytest pytest-cov \
-  openpathsampling \
-  openmm openmmtools mdtraj \
-  h5py networkx pyyaml
-
-# Install PyTorch (choose one)
-# Option A: GPU support
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-
-# Option B: CPU only
-conda install pytorch torchvision torchaudio cpuonly -c pytorch
-
-# Install your packages
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-pip install -e /Users/rbreeba/code/aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis/src
-```
-
-### Method 3: Minimal Environment
-
-```bash
-# Lightweight environment - use if storage is limited
-conda create -n aimmd-tis-minimal python=3.10 -c conda-forge
-
-conda activate aimmd-tis-minimal
-
-# Install only essential packages
-conda install -c conda-forge \
-  numpy scipy \
-  openpathsampling \
-  openmm openmmtools mdtraj \
-  pytorch::pytorch pytorch::pytorch-cuda=11.8
-
-pip install -e /Users/rbreeba/code/ops-setup[openmm]
-pip install -e /Users/rbreeba/code/aimmd
-pip install -e /Users/rbreeba/code/aimmd-tis/src
-```
-
----
-
-## Using the Environment
-
-### Activate for Work
-
-```bash
-conda activate aimmd-tis
-```
-
-### Check Installed Packages
-
-```bash
-conda list
-```
-
-### Run Python Script
-
-```bash
-python my_script.py
-```
-
-### Run Jupyter Notebook
-
-```bash
-jupyter notebook
-```
-
-### Deactivate
-
-```bash
-conda deactivate
-```
-
----
-
-## PyTorch GPU Setup
-
-### Check CUDA Version
-
-```bash
-# Check your CUDA installation
-nvidia-smi
-
-# Will show: CUDA Version: X.X
-```
-
-### Install Correct PyTorch
-
-```bash
-# For CUDA 11.8 (most common)
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-
-# For CUDA 12.1
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
-
-# For CPU only (no GPU)
-conda install pytorch torchvision torchaudio cpuonly -c pytorch
-```
-
-### Verify GPU Access
-
-```bash
-python << 'EOF'
-import torch
-print(f"PyTorch version: {torch.__version__}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"CUDA version: {torch.version.cuda}")
-EOF
-```
-
----
+`aimmd` is not on conda-forge, so it is not part of `environment.yml`.
 
 ## Troubleshooting
 
-### Import Errors
+**`ImportError: cannot import name 'TrainSet' from 'aimmd' (unknown location)`.**
+Python found the `aimmd/` clone folder in the current directory instead of the installed package.
+Run Python from a different folder, for example `aimmd-tis/examples/toy_examples`.
+
+**`ImportError: cannot import name 'construct_TP_from_plus_and_minus_traj_segments'`.**
+asyncmd is too new: `pip install "asyncmd==0.3.3"`.
+
+**`AttributeError: np.string_ was removed in the NumPy 2.0 release`.**
+NumPy 2 is installed. Check `python -c "import numpy; print(numpy.__version__)"`. The usual cause is that pip upgraded NumPy
+while installing a package (see the `mdtraj` pin above). Recreate the environment from `environment.yml`.
+
+**`ModuleNotFoundError: No module named 'pkg_resources'`.**
+setuptools is too new for aimmd 0.9: `conda install -c conda-forge "setuptools<81"`.
+
+**`ModuleNotFoundError: Cython not found` while installing aimmd.**
+Install aimmd with `pip install --no-build-isolation -e ./aimmd`.
+
+**`TypeError: PytorchRCModel.__init__() got an unexpected keyword argument 'cache_file'`.**
+aimmd 0.10 is installed. Check out commit `1848a7a` in the aimmd clone and reinstall it.
+
+**OpenMM platforms.** Check which platforms OpenMM can use with
+`python -c "from openmm import Platform as P; print([P.getPlatform(i).getName() for i in range(P.getNumPlatforms())])"`.
+The toy examples use the OPS toy engine and do not need OpenMM. The host-guest scripts need a
+CUDA or OpenCL platform for reasonable speed.
+
+**GPU PyTorch (Linux).** `environment.yml` installs the conda-forge `pytorch` build, which picks a CUDA
+build when a GPU driver is present. Check with `python -c "import torch; print(torch.cuda.is_available())"`.
+
+## Updating
 
 ```bash
-# Error: "No module named 'aimmd'"
-# Solution: Make sure aimmd is installed
-
-conda activate aimmd-tis
-pip install -e /Users/rbreeba/code/aimmd
-
-# Verify
-python -c "import aimmd; print('OK')"
+conda env update -f aimmd-tis/environment.yml --prune
+git -C aimmd-tis pull && git -C ops-setup pull && git -C rpe_mbar pull
 ```
 
-### OpenMM/CUDA Issues
+The packages are installed in editable mode (`-e`), so pulled changes are used without reinstalling.
+Keep the aimmd clone on commit `1848a7a`.
+
+## Remove
 
 ```bash
-# Error: "No OpenMM Platform"
-# Solution: Check OpenMM installation
-
-python << 'EOF'
-from openmm import Platform
-print("Available platforms:", Platform.getPlatformNames())
-EOF
-
-# If only CPU appears, reinstall with GPU support
-conda install -c conda-forge openmm
-
-# Or try:
-conda install openmm::openmm -c conda-forge
-```
-
-### PyTorch GPU Not Detected
-
-```bash
-# Check GPU availability
-python << 'EOF'
-import torch
-print(f"GPU available: {torch.cuda.is_available()}")
-print(f"GPU count: {torch.cuda.device_count()}")
-if not torch.cuda.is_available():
-    print("GPU not found - check nvidia-smi and CUDA installation")
-EOF
-
-# Reinstall PyTorch with correct CUDA version
-conda remove pytorch torchvision torchaudio pytorch-cuda -y
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-```
-
-### Memory Issues
-
-```bash
-# If environment creation fails due to memory:
-# 1. Clear conda cache
-conda clean --all -y
-
-# 2. Create minimal environment first
-conda create -n aimmd-tis-min python=3.10 -c conda-forge
-
-# 3. Install packages one at a time
-conda activate aimmd-tis-min
-conda install -c conda-forge numpy -y
-conda install -c conda-forge scipy -y
-# ... continue for other packages
-```
-
-### Conflicting Dependencies
-
-```bash
-# If you get dependency conflicts, try:
-# 1. Create fresh environment
+conda deactivate
 conda env remove -n aimmd-tis
-conda env create -f environment.yml
-
-# 2. Or manually resolve
-conda install -c conda-forge --update-all
 ```
-
----
-
-## Development Setup
-
-For active development of aimmd-tis:
-
-```bash
-# Create development environment
-conda env create -f /Users/rbreeba/code/aimmd-tis/environment.yml -n aimmd-tis-dev
-
-# Activate
-conda activate aimmd-tis-dev
-
-# Install all three packages in editable mode
-pip install -e /Users/rbreeba/code/ops-setup[openmm,dev]
-pip install -e /Users/rbreeba/code/aimmd[dev]
-pip install -e /Users/rbreeba/code/aimmd-tis/src
-
-# Install additional dev tools
-conda install -c conda-forge black flake8 mypy isort
-```
-
-### Running Tests
-
-```bash
-conda activate aimmd-tis-dev
-
-# From aimmd-tis directory
-cd /Users/rbreeba/code/aimmd-tis
-pytest tests/
-
-# With coverage
-pytest --cov=aimmdTIS tests/
-```
-
-### Code Quality Checks
-
-```bash
-# Format code
-black /Users/rbreeba/code/aimmd-tis/src
-
-# Check style
-flake8 /Users/rbreeba/code/aimmd-tis/src
-
-# Type checking
-mypy /Users/rbreeba/code/aimmd-tis/src
-```
-
----
-
-## Multiple Environments
-
-Use different environments for different purposes:
-
-```bash
-# Production use
-conda env create -f environment.yml -n aimmd-tis
-
-# Development
-conda env create -f environment.yml -n aimmd-tis-dev
-
-# Testing
-conda env create -f environment.yml -n aimmd-tis-test
-
-# Minimal
-conda create -n aimmd-tis-min python=3.10 -c conda-forge
-
-# Specific version testing
-conda create -n aimmd-tis-torch2 python=3.10 -c conda-forge
-# Then install torch 2.0 specifically
-```
-
-Switch between them:
-
-```bash
-conda activate aimmd-tis
-# or
-conda activate aimmd-tis-dev
-# or
-conda activate aimmd-tis-test
-```
-
----
-
-## Updating Packages
-
-### Update Environment
-
-```bash
-# Update from environment file
-conda env update -f environment.yml --prune
-
-# Update all packages
-conda update --all -c conda-forge
-
-# Update specific package
-conda install -c conda-forge numpy --update-all
-```
-
-### Update Installed Packages
-
-```bash
-# Update ops-setup
-pip install --upgrade /Users/rbreeba/code/ops-setup[openmm]
-
-# Update aimmd
-pip install --upgrade /Users/rbreeba/code/aimmd
-
-# Update aimmd-tis
-pip install --upgrade /Users/rbreeba/code/aimmd-tis
-```
-
----
-
-## Backup and Recovery
-
-### Export Environment
-
-```bash
-# Create backup
-conda env export -n aimmd-tis > aimmd-tis-backup-$(date +%Y%m%d).yml
-
-# For sharing
-conda env export -n aimmd-tis --no-builds > aimmd-tis-nobuilds.yml
-```
-
-### Restore from Backup
-
-```bash
-# Create environment from backup
-conda env create -f aimmd-tis-backup-20260128.yml
-
-# Or update existing
-conda env update -f aimmd-tis-backup-20260128.yml
-```
-
----
-
-## Environment Variables
-
-Set environment variables for the conda environment:
-
-```bash
-# Create activation script
-mkdir -p /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/activate.d
-mkdir -p /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/deactivate.d
-
-# Create activation script
-cat > /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/activate.d/env_vars.sh << 'EOF'
-#!/bin/bash
-export OPS_SETUP_PATH=/Users/rbreeba/code/ops-setup
-export AIMMD_PATH=/Users/rbreeba/code/aimmd
-export AIMMD_TIS_PATH=/Users/rbreeba/code/aimmd-tis
-EOF
-
-# Create deactivation script
-cat > /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/deactivate.d/env_vars.sh << 'EOF'
-#!/bin/bash
-unset OPS_SETUP_PATH
-unset AIMMD_PATH
-unset AIMMD_TIS_PATH
-EOF
-
-chmod +x /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/activate.d/env_vars.sh
-chmod +x /Users/rbreeba/miniconda3/envs/aimmd-tis/etc/conda/deactivate.d/env_vars.sh
-```
-
-Now these variables will be set when you activate the environment.
-
----
-
-## Summary
-
-| Task | Command |
-|------|---------|
-| Create | `conda env create -f environment.yml` |
-| Activate | `conda activate aimmd-tis` |
-| Install ops-setup | `pip install -e /path/to/ops-setup[openmm]` |
-| Install aimmd | `pip install -e /path/to/aimmd` |
-| Install aimmd-tis | `pip install -e /path/to/aimmd-tis` |
-| Run tests | `pytest tests/` |
-| Check GPU | `python -c "import torch; print(torch.cuda.is_available())"` |
-| Deactivate | `conda deactivate` |
-| Remove | `conda remove -n aimmd-tis --all` |
-| Update | `conda env update -f environment.yml --prune` |
-| Export | `conda env export > backup.yml` |
-
----
-
-## Next Steps
-
-1. Create environment: `conda env create -f environment.yml`
-2. Activate: `conda activate aimmd-tis`
-3. Verify GPU (if available): `nvidia-smi`
-4. Install packages in order (ops-setup → aimmd → aimmd-tis)
-5. Run verification tests
-6. Start using AIMMD-TIS!
-
-For help with specific issues, see the **Troubleshooting** section above.

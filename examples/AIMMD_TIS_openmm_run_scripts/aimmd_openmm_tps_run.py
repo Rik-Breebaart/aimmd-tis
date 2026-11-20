@@ -10,13 +10,17 @@ import argparse
 import sys
 from pathlib import Path
 
+import aimmd
 import numpy as np
 import openpathsampling as paths
 import torch
 from openpathsampling.experimental.storage import Storage
 from simtk import unit
 
-from aimmdTIS import AIMMDSetup, TPS_setup, load_initial_trajectory
+from ops_setup.engines.openmm_sampling import load_initial_trajectory
+
+from aimmdTIS import AIMMDSetup
+from aimmdTIS.openmm_setup import TPS_setup
 
 
 def run_aimmd_tps(
@@ -94,7 +98,7 @@ def run_aimmd_tps(
     ops_store_path = output_path / f"aimmd_tps_{tps_setup.system_name}.db"
 
     # Create AIMMD storage and model
-    aimmd_store = __import__("aimmd").Storage(str(aimmd_store_path), "w")
+    aimmd_store = aimmd.Storage(str(aimmd_store_path), "w")
     model = aimmd_setup.setup_RCModel(aimmd_store, load_model_path=previous_model_file)
 
     # Get GPU device
@@ -104,7 +108,6 @@ def run_aimmd_tps(
         print("Using MPS GPU")
 
     # Setup hooks for AIMMD
-    aimmd = __import__("aimmd").aimmd
     trainset = aimmd.TrainSet(n_states=2)
     trainhook = aimmd.ops.TrainingHook(model, trainset)
     storehook = aimmd.ops.AimmdStorageHook(aimmd_store, model, trainset)

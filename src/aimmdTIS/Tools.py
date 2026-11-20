@@ -50,7 +50,7 @@ def print_config(config, prefix=''):
                 print(f"{new_prefix}{item}")
 
 def interface_indicator(interface_value):
-    return int(np.floor(interface_value*100))
+    return int(np.round(interface_value*100))
 
 def figure_storage_path(filename, suffix=".pdf",output_path=None):
     return Path(output_path / filename).with_suffix(suffix)

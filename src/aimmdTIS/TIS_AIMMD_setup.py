@@ -1,9 +1,5 @@
 ''' 
 This file will contain the setup script for performing TIS using the AIMMD learned committor model. 
-
-The goal of this setup file is to be able to work with any toy model for now. 
-Not yet looking into how to work on real systems, although the method should mostly be conversible to that case.
-
 '''
 import numpy as np 
 import matplotlib.pyplot as plt
@@ -46,20 +42,35 @@ def _predict_with_nnet(descriptors, nnet, batch_size):
     dtype = next(nnet.parameters()).dtype
     n_split = (descriptors.shape[0] // batch_size) + 1
     predictions = []
+    was_training = nnet.training
     nnet.eval()
     with torch.no_grad():
         for descript_part in np.array_split(descriptors, n_split):
             descript_part = torch.as_tensor(descript_part, device=device, dtype=dtype)
             pred = nnet(descript_part).cpu().numpy()
             predictions.append(pred)
-    nnet.train()
+    nnet.train(was_training)
     return np.concatenate(predictions, axis=0)
+
+
+# Unpickled networks keyed by file path, so the committor CV does not
+# reload the network from disk for every snapshot.
+_NNET_CACHE = {}
+
+
+def _load_cached_nnet(nnet_location):
+    nnet = _NNET_CACHE.get(nnet_location)
+    if nnet is None:
+        with open(nnet_location, "rb") as file_handle:
+            nnet = pickle.load(file_handle)
+        nnet.eval()
+        _NNET_CACHE[nnet_location] = nnet
+    return nnet
 
 
 def _q_committor_pkl(snapshot, nnet_location, descriptor_transform, batch_size):
     descriptors = descriptor_transform(snapshot)
-    with open(nnet_location, "rb") as file_handle:
-        nnet = pickle.load(file_handle)
+    nnet = _load_cached_nnet(nnet_location)
     pred = _predict_with_nnet(descriptors, nnet, batch_size)
     return float(np.asarray(pred).reshape(-1)[0])
 
@@ -86,6 +97,22 @@ def _cv_with_state(snapshot, cv, state, in_state_value):
     if state(snapshot):
         return in_state_value
     return cv(snapshot)
+
+
+def masked_extrema(values, in_state, in_state_value):
+    """(min, max) of ``values`` over frames outside the origin state.
+
+    This is the extremum of the interface order parameter built by
+    :meth:`AIMMD_TIS.create_interface_set` (``in_state_value`` inside the
+    state, the CV value elsewhere), so a path only counts as crossing an
+    interface after it has left its initial state. A path that never leaves
+    the state gets ``in_state_value`` for both.
+    """
+    outside = ~np.asarray(in_state, dtype=bool)
+    if not outside.any():
+        return float(in_state_value), float(in_state_value)
+    values = np.asarray(values, dtype=float).reshape(-1)[outside]
+    return float(values.min()), float(values.max())
 
 
 class AIMMD_TIS:
@@ -165,7 +192,7 @@ class AIMMD_TIS:
                 bias=-6,
             ).with_diskcache()
         else:
-            ValueError("Incorrect cvq_type given as argument, choose from either 'pkl','nnet','model' ")
+            raise ValueError("Incorrect cvq_type given as argument, choose from either 'pkl','nnet','model' ")
 
     @staticmethod
     def _sanitize_label(value):
@@ -260,7 +287,21 @@ class AIMMD_TIS:
             merged.update(cvs_dict)
         return merged
 
-    def compute_cv_extrema(self, storage, cvs_dict=None, n_thermalize=0):
+    def _origin_state(self, direction):
+        """Initial state of the interface ensemble and its order-parameter sentinel."""
+        if direction == "forward":
+            return self.stateA, IN_STATE_LOW
+        if direction == "backward":
+            return self.stateB, IN_STATE_HIGH
+        raise ValueError(f"direction must be 'forward' or 'backward', got {direction!r}")
+
+    def compute_cv_extrema(self, storage, cvs_dict=None, n_thermalize=0, direction=None):
+        """Per-path CV extrema from a stored TIS run (reads every snapshot).
+
+        With ``direction`` given, frames inside the ensemble's initial state are
+        excluded, consistent with the interface definition (see
+        :func:`masked_extrema`). ``direction=None`` gives raw extrema.
+        """
         cvs = self._merge_cvs_dict(cvs_dict)
         data = {"step": []}
 
@@ -268,18 +309,41 @@ class AIMMD_TIS:
             data[f"min_{cv_name}"] = []
             data[f"max_{cv_name}"] = []
 
+        origin_state, sentinel = self._origin_state(direction) if direction else (None, None)
         for i, step in enumerate(storage.steps[n_thermalize:]):
             step_index = i + n_thermalize
             traj = step.active[0].trajectory
             data["step"].append(step_index)
+            if origin_state is not None:
+                in_state = [bool(origin_state(snapshot)) for snapshot in traj]
+            else:
+                in_state = np.zeros(len(traj), dtype=bool)
 
             for cv_name, cv_func in cvs.items():
                 values = [self._as_scalar(cv_func(snapshot)) for snapshot in traj]
-                data[f"min_{cv_name}"].append(min(values))
-                data[f"max_{cv_name}"].append(max(values))
+                vmin, vmax = masked_extrema(values, in_state, sentinel)
+                data[f"min_{cv_name}"].append(vmin)
+                data[f"max_{cv_name}"].append(vmax)
 
         return pd.DataFrame(data)
-    
+
+    def _q_values(self, traj, descriptors):
+        """cv_q along a trajectory in one batched network pass."""
+        if self.cvq_type == "temp":
+            return np.array([self._as_scalar(self.cv_q(snapshot)) for snapshot in traj])
+        nnet = _load_cached_nnet(str(self._model_pickle_path)) if self._uses_model_pickle else self.model.nnet
+        return np.asarray(_predict_with_nnet(descriptors, nnet, 4096)).reshape(-1)
+
+    def _path_extrema_row(self, step_index, traj, descriptors, in_state, sentinel, cvs_dict=None):
+        """One extrema-CSV row for a path, with frames in the origin state masked."""
+        row = {"step": int(step_index)}
+        vmin, vmax = masked_extrema(self._q_values(traj, descriptors), in_state, sentinel)
+        row[f"min_{self.cv_label}"], row[f"max_{self.cv_label}"] = vmin, vmax
+        for cv_name, cv_func in (cvs_dict or {}).items():
+            values = [self._as_scalar(cv_func(snapshot)) for snapshot in traj]
+            row[f"min_{cv_name}"], row[f"max_{cv_name}"] = masked_extrema(values, in_state, sentinel)
+        return row
+
     def store_max_min_q(
         self,
         storage,
@@ -290,16 +354,26 @@ class AIMMD_TIS:
         n_thermalize=0,
         origin_label=None,
         iteration=None,
+        extrema_df=None,
     ):
-        interface_ind = int(np.round(interface_value*100))
+        """Write the per-path extrema CSV for one interface ensemble.
+
+        ``extrema_df`` (from the on-the-fly recording in :meth:`run_TIS`) is
+        written as is; otherwise the extrema are computed from ``storage``.
+        """
+        interface_ind = interface_indicator(interface_value)
         output_dir = Path(directory) if directory else self.directory
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        cv_extrema_df = self.compute_cv_extrema(
-            storage=storage,
-            cvs_dict=cvs_dict,
-            n_thermalize=n_thermalize,
-        )
+        if extrema_df is not None:
+            cv_extrema_df = extrema_df[extrema_df["step"] >= int(n_thermalize)].reset_index(drop=True)
+        else:
+            cv_extrema_df = self.compute_cv_extrema(
+                storage=storage,
+                cvs_dict=cvs_dict,
+                n_thermalize=n_thermalize,
+                direction=direction,
+            )
         # External filenames should be stable and human-readable.
         # Do not fall back to the internal CV UUID-style name.
         safe_origin = self._sanitize_label(origin_label) or self.cv_label
@@ -348,7 +422,8 @@ class AIMMD_TIS:
                        descriptor_storage_path=None,
                        descriptor_set_name=None,
                        descriptor_name="descriptors",
-                       descriptor_flush_every=1):
+                       descriptor_flush_every=1,
+                       extrema_source="on_the_fly"):
         
         if directory is not None:
             self.directory = Path(directory)
@@ -386,6 +461,7 @@ class AIMMD_TIS:
                     descriptor_set_name=descriptor_set_name,
                     descriptor_name=descriptor_name,
                     descriptor_flush_every=descriptor_flush_every,
+                    extrema_source=extrema_source,
                 )
                 run_summary["storage_path"] = str(storage_path)
                 run_summaries.append(run_summary)
@@ -417,7 +493,8 @@ class AIMMD_TIS:
                        descriptor_storage_path=None,
                        descriptor_set_name=None,
                        descriptor_name="descriptors",
-                       descriptor_flush_every=1):
+                       descriptor_flush_every=1,
+                       extrema_source="on_the_fly"):
         return self.run_TIS(
             n_mc_steps=n_mc_steps,
             storage=storage,
@@ -438,6 +515,7 @@ class AIMMD_TIS:
             descriptor_set_name=descriptor_set_name,
             descriptor_name=descriptor_name,
             descriptor_flush_every=descriptor_flush_every,
+            extrema_source=extrema_source,
         )
 
     def run_TIS(self, 
@@ -460,8 +538,25 @@ class AIMMD_TIS:
                 descriptor_set_name=None,
                 descriptor_name="descriptors",
                 descriptor_flush_every=1,
-                log_diagnostics=False
+                log_diagnostics=False,
+                extrema_source="on_the_fly",
                 ):
+        """Run TIS for one interface and write the per-path extrema CSV.
+
+        ``extrema_source``:
+          * ``"on_the_fly"`` (default): extrema of the interface order parameter
+            are recorded from each new path while sampling, using one batched
+            network pass per path, so the storage is not read again afterwards.
+          * ``"storage"``: computed after sampling by reading every snapshot back
+            from the OPS storage.
+
+        Both exclude frames inside the ensemble's initial state, consistent with
+        the interface definition. With ``descriptor_storage_path`` the path
+        descriptors and shot results are stored per MC step, storage index = MC
+        step (the initial path is step 0).
+        """
+        if extrema_source not in ("on_the_fly", "storage"):
+            raise ValueError(f"extrema_source must be 'on_the_fly' or 'storage', got {extrema_source!r}")
 
 
         print("Creating network...")
@@ -490,7 +585,7 @@ class AIMMD_TIS:
             elif scheme_selector == "InterfaceConstrained":
                 selector = paths.InterfaceConstraiendaSelector(interface_value)                                                                                    
             else: 
-                ImportError("Incorrect selector type given choose from either: Uniform, Gaussian, Interface_constrained ")
+                raise ImportError("Incorrect selector type given choose from either: Uniform, Gaussian, Interface_constrained ")
             modifier_method= None
             if scheme_modifier==None or scheme_modifier=="NoModifier":
                 modifier_method = None
@@ -509,7 +604,7 @@ class AIMMD_TIS:
                 modifier_method = paths.RandomVelocities(beta=beta, engine=engine)       
 
             else:
-                ImportError("Incorrect modifier type given. Choose from either: 'NoModifier' or 'RandomVelocities'")                           
+                raise ImportError("Incorrect modifier type given. Choose from either: 'NoModifier' or 'RandomVelocities'")                           
 
             if scheme_move=="OneWay":
                 move_scheme = paths.OneWayShootingMoveScheme(network, 
@@ -523,7 +618,7 @@ class AIMMD_TIS:
                 move_scheme.append(paths.strategies.OrganizeByMoveGroupStrategy())
                 move_scheme.build_move_decision_tree()
             else:
-                ImportError("Incorrect move scheme given. Choose from either: 'OneWay' or 'TwoWay'")
+                raise ValueError("Incorrect move scheme given. Choose from either: 'OneWay' or 'TwoWay'")
 
             initial_conditions = move_scheme.initial_conditions_from_trajectories(initial_path)
             initial_conditions.sanity_check()
@@ -577,10 +672,52 @@ class AIMMD_TIS:
                 m = rem // 60
                 return f"{d}d {h:02d}:{m:02d}"
 
+            origin_state, sentinel = self._origin_state(direction)
+            on_the_fly = extrema_source == "on_the_fly"
+            extrema_rows = []
+
+            def _record_path(step_index, traj):
+                """Extrema row and/or descriptor-storage entry for one path."""
+                nonlocal next_storage_index
+                if not on_the_fly and desc_storage is None:
+                    return
+                desc_arr = np.asarray(self.model.descriptor_transform(traj))
+                if desc_arr.ndim == 1:
+                    desc_arr = desc_arr.reshape(-1, 1)
+                if on_the_fly:
+                    in_state = np.array([bool(origin_state(snapshot)) for snapshot in traj])
+                    extrema_rows.append(self._path_extrema_row(
+                        step_index, traj, desc_arr, in_state, sentinel, cvs_dict))
+                if desc_storage is not None:
+                    # Shot result per frame: state at both path ends, as in AIMMD/RPE trainsets.
+                    ends = (traj[0], traj[-1])
+                    shot = np.array([sum(bool(self.stateA(s)) for s in ends),
+                                     sum(bool(self.stateB(s)) for s in ends)], dtype=float)
+                    desc_storage.add_trajectory(
+                        set_name=descriptor_set_name,
+                        interface_value=float(interface_value),
+                        descriptors={descriptor_name: desc_arr},
+                        n_points=len(traj),
+                        storage_index=next_storage_index,
+                        shot_results=np.tile(shot, (len(traj), 1)),
+                    )
+                    next_storage_index += 1
+
             import time as _time
             _t_start = _time.monotonic()
             _step_times = []
             try:
+                # Initial path = MC step 0, so CSV rows and descriptor-storage
+                # indices both equal the OPS step number.
+                if on_the_fly or next_storage_index == 0:
+                    initial_traj = storage.steps[0].active[0].trajectory
+                    if desc_storage is not None and next_storage_index != 0:
+                        # Appending to an existing descriptor storage: keep its numbering.
+                        saved, desc_storage = desc_storage, None
+                        _record_path(0, initial_traj)
+                        desc_storage = saved
+                    else:
+                        _record_path(0, initial_traj)
                 for step_ind in range(int(n_mc_steps)):
                     _t_step_start = _time.monotonic()
                     sampler.run(1)
@@ -598,24 +735,9 @@ class AIMMD_TIS:
                         f"ETA={_fmt_duration(_eta)}",
                         flush=True,
                     )
-                    if desc_storage is None:
-                        continue
+                    _record_path(step_ind + 1, storage.steps[-1].active[0].trajectory)
 
-                    traj = storage.steps[-1].active[0].trajectory
-                    desc_arr = np.asarray(self.model.descriptor_transform(traj))
-                    if desc_arr.ndim == 1:
-                        desc_arr = desc_arr.reshape(-1, 1)
-
-                    desc_storage.add_trajectory(
-                        set_name=descriptor_set_name,
-                        interface_value=float(interface_value),
-                        descriptors={descriptor_name: desc_arr},
-                        n_points=len(traj),
-                        storage_index=next_storage_index,
-                    )
-                    next_storage_index += 1
-
-                    if descriptor_flush_every is not None and descriptor_flush_every > 0:
+                    if desc_storage is not None and descriptor_flush_every is not None and descriptor_flush_every > 0:
                         if ((step_ind + 1) % int(descriptor_flush_every)) == 0:
                             desc_storage.flush()
             finally:
@@ -625,7 +747,7 @@ class AIMMD_TIS:
             print('snapshots:', len(storage.snapshots))
             print('trajectories:', len(storage.trajectories))
             print('samples:', len(storage.samples))
-            print("storing maximum q")
+            print(f"storing path extrema ({extrema_source})")
             extrema_csv_path = self.store_max_min_q(
                 storage=storage,
                 direction=direction,
@@ -635,6 +757,7 @@ class AIMMD_TIS:
                 n_thermalize=n_thermalize,
                 origin_label=origin_label,
                 iteration=iteration,
+                extrema_df=pd.DataFrame(extrema_rows) if on_the_fly else None,
             )
             if log_diagnostics:
                 print(move_scheme.move_summary(storage.steps))
@@ -662,4 +785,4 @@ class AIMMD_TIS:
             }
 
         else :
-            InterruptedError("Storage does not contain an engine")
+            raise InterruptedError("Storage does not contain an engine")
